@@ -228,9 +228,13 @@ class SafeCommentsScraper:
             # Подключаем перехватчик ответов
             page.on("response", self._handle_response)
             
-            # Переходим на пост
+            # Переходим на пост с увеличенным timeout
             print(f"🔗 Переход на: {post_url}")
-            page.goto(post_url, wait_until="networkidle")
+            try:
+                page.goto(post_url, wait_until="domcontentloaded", timeout=60000)
+            except Exception as e:
+                print(f"   ⚠️  Загрузка заняла больше времени: {e}")
+                # Продолжаем даже если timeout - страница может быть частично загружена
             
             # Ждем загрузки
             time.sleep(random.uniform(3, 5))
