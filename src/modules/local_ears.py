@@ -20,7 +20,7 @@ class LocalEars:
     
     def __init__(
         self, 
-        model_size: str = "base", 
+        model_size: str = "small",  # Изменено с "base" на "small" для лучшей точности
         device: str = "cpu", 
         num_threads: int = 8,
         compute_type: str = "int8"
@@ -82,8 +82,9 @@ class LocalEars:
         if not media_path or not media_path.exists():
             return None
         
-        # Проверяем, что это видео
-        if media_path.suffix.lower() not in ['.mp4', '.mov', '.avi', '.mkv', '.webm']:
+        # Проверяем, что это видео или аудио
+        valid_extensions = ['.mp4', '.mov', '.avi', '.mkv', '.webm', '.mp3', '.m4a', '.wav', '.flac', '.ogg']
+        if media_path.suffix.lower() not in valid_extensions:
             print("ℹ️  Это изображение, транскрибация не требуется")
             return None
         

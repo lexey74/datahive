@@ -1,0 +1,446 @@
+#!/usr/bin/env python3
+"""
+Модуль 3: AI Анализ контента
+
+Анализирует изображения, описания и транскрипции.
+Создает теги, саммари и сохраняет в Obsidian-совместимый Markdown.
+"""
+from pathlib import Path
+from typing import List, Optional, Dict
+import sys
+from datetime import datetime
+
+# Добавляем src в путь
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from src.modules.local_brain import LocalBrain
+from src.modules.tag_manager import TagManager
+
+
+class AIProcessor:
+    """
+    Процессор AI анализа
+    
+    Анализирует контент, создает теги и саммари,
+    сохраняет в Obsidian-совместимый формат.
+    """
+    
+    def __init__(
+        self, 
+        content_dir: Path = Path("downloads"),
+        tags_file: Path = Path("tags.json")
+    ):
+        """
+        Args:
+            content_dir: Директория с папками контента
+            tags_file: Файл с базой тегов
+        """
+        self.content_dir = Path(content_dir)
+        self.brain = LocalBrain()
+        self.tag_manager = TagManager(tags_file=tags_file)
+        
+        # Поддерживаемые форматы изображений
+        self.image_extensions = ['.jpg', '.jpeg', '.png', '.webp', '.gif']
+    
+    def find_content_folders(self) -> List[Path]:
+        """
+        Находит все папки с контентом
+        
+        Returns:
+            Список путей к папкам
+        """
+        if not self.content_dir.exists():
+            print(f"❌ Директория не найдена: {self.content_dir}")
+            return []
+        
+        folders = []
+        for item in self.content_dir.iterdir():
+            if item.is_dir() and (
+                item.name.startswith('instagram_') or 
+                item.name.startswith('youtube_')
+            ):
+                folders.append(item)
+        
+        return sorted(folders)
+    
+    def has_analysis(self, folder: Path) -> bool:
+        """
+        Проверяет, есть ли уже AI анализ
+        
+        Args:
+            folder: Папка для проверки
+            
+        Returns:
+            True если Note.md существует
+        """
+        note_file = folder / "Note.md"
+        return note_file.exists()
+    
+    def read_description(self, folder: Path) -> Optional[str]:
+        """
+        Читает описание из description.md
+        
+        Args:
+            folder: Папка с контентом
+            
+        Returns:
+            Текст описания или None
+        """
+        desc_file = folder / "description.md"
+        if desc_file.exists():
+            return desc_file.read_text(encoding='utf-8')
+        return None
+    
+    def read_transcript(self, folder: Path) -> Optional[str]:
+        """
+        Читает транскрипцию из transcript.md
+        
+        Args:
+            folder: Папка с контентом
+            
+        Returns:
+            Текст транскрипции или None
+        """
+        transcript_file = folder / "transcript.md"
+        if transcript_file.exists():
+            return transcript_file.read_text(encoding='utf-8')
+        return None
+    
+    def find_images(self, folder: Path) -> List[Path]:
+        """
+        Находит изображения в папке
+        
+        Args:
+            folder: Папка для поиска
+            
+        Returns:
+            Список путей к изображениям
+        """
+        images = []
+        for file in folder.iterdir():
+            if file.is_file() and file.suffix.lower() in self.image_extensions:
+                images.append(file)
+        return sorted(images)
+    
+    def analyze_content(self, folder: Path) -> Optional[Dict]:
+        """
+        Анализирует контент папки
+        
+        Args:
+            folder: Папка для анализа
+            
+        Returns:
+            Словарь с результатами анализа или None
+        """
+        print(f"\n🧠 AI Анализ: {folder.name}")
+        
+        # Собираем данные
+        description = self.read_description(folder)
+        transcript = self.read_transcript(folder)
+        images = self.find_images(folder)
+        
+        if not description and not transcript:
+            print("⚠️  Нет данных для анализа (нет description.md и transcript.md)")
+            return None
+        
+        # Формируем контекст для анализа
+        context_parts = []
+        
+        if description:
+            context_parts.append(f"## Описание\n\n{description}")
+        
+        if transcript:
+            context_parts.append(f"## Транскрипция\n\n{transcript}")
+        
+        if images:
+            context_parts.append(f"## Изображения\n\nКоличество: {len(images)}")
+        
+        context = "\n\n".join(context_parts)
+        
+        # AI анализ
+        try:
+            print("   🤖 Запуск AI анализа...")
+            
+            # Создаем саммари
+            summary = self.brain.analyze(
+                caption=description or "",
+                transcript=transcript or ""
+            )
+            
+            if not summary:
+                print("❌ AI не вернул результат")
+                return None
+            
+            # Извлекаем теги из саммари
+            print("   🏷️  Извлечение тегов...")
+            tags = self.tag_manager.extract_tags(summary)
+            
+            # Добавляем теги в базу (если новые)
+            new_tags = []
+            for tag in tags:
+                if not self.tag_manager.tag_exists(tag):
+                    self.tag_manager.add_tag(tag)
+                    new_tags.append(tag)
+            
+            if new_tags:
+                print(f"   ✨ Новые теги: {', '.join(new_tags)}")
+            
+            print(f"   ✅ Теги: {', '.join(tags)}")
+            
+            return {
+                'summary': summary,
+                'tags': tags,
+                'new_tags': new_tags,
+                'has_description': description is not None,
+                'has_transcript': transcript is not None,
+                'image_count': len(images)
+            }
+            
+        except Exception as e:
+            print(f"❌ Ошибка AI анализа: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+    
+    def create_obsidian_note(
+        self, 
+        folder: Path, 
+        analysis: Dict
+    ) -> Optional[Path]:
+        """
+        Создает Note.md в формате Obsidian
+        
+        Args:
+            folder: Папка для сохранения
+            analysis: Результаты анализа
+            
+        Returns:
+            Путь к созданному файлу или None
+        """
+        note_file = folder / "Note.md"
+        
+        # Извлекаем название из имени папки
+        folder_name = folder.name
+        # Формат: источник_ID_название
+        parts = folder_name.split('_', 2)
+        title = parts[2] if len(parts) > 2 else folder_name
+        title = title.replace('_', ' ')
+        
+        # Создаем Obsidian frontmatter
+        tags_str = ', '.join(analysis['tags'])
+        
+        markdown = f"""---
+title: {title}
+date: {datetime.now().strftime('%Y-%m-%d')}
+tags: [{', '.join(f'#{tag}' for tag in analysis['tags'])}]
+source: {parts[0] if len(parts) > 0 else 'unknown'}
+processed: true
+---
+
+# {title}
+
+## 📊 Метаданные
+
+- **Источник**: {parts[0].upper() if len(parts) > 0 else 'UNKNOWN'}
+- **ID**: {parts[1] if len(parts) > 1 else 'unknown'}
+- **Дата обработки**: {datetime.now().strftime('%Y-%m-%d %H:%M')}
+- **Изображений**: {analysis['image_count']}
+- **Транскрипция**: {'✅' if analysis['has_transcript'] else '❌'}
+
+## 🏷️ Теги
+
+{' '.join(f'#{tag}' for tag in analysis['tags'])}
+
+## 📝 Саммари
+
+{analysis['summary']}
+
+## 📎 Связанные файлы
+
+- [[description.md|Описание]]
+"""
+        
+        if analysis['has_transcript']:
+            markdown += "- [[transcript.md|Транскрипция]]\n"
+        
+        # Добавляем ссылки на изображения
+        if analysis['image_count'] > 0:
+            markdown += "\n## 🖼️ Изображения\n\n"
+            images = self.find_images(folder)
+            for i, img in enumerate(images, 1):
+                markdown += f"![[{img.name}]]\n"
+        
+        markdown += "\n---\n\n*Создано автоматически модулем AI анализа SecBrain*\n"
+        
+        try:
+            note_file.write_text(markdown, encoding='utf-8')
+            print(f"✅ Сохранено: Note.md")
+            return note_file
+        except Exception as e:
+            print(f"❌ Ошибка сохранения: {e}")
+            return None
+    
+    def process_folder(self, folder: Path) -> dict:
+        """
+        Обрабатывает одну папку
+        
+        Args:
+            folder: Папка для обработки
+            
+        Returns:
+            Статистика обработки
+        """
+        stats = {
+            'folder': folder.name,
+            'already_processed': False,
+            'success': False,
+            'new_tags': 0,
+            'error': None
+        }
+        
+        # Проверяем, не обработана ли уже
+        if self.has_analysis(folder):
+            print(f"⏭️  Пропуск: {folder.name} (Note.md существует)")
+            stats['already_processed'] = True
+            return stats
+        
+        # Анализируем
+        analysis = self.analyze_content(folder)
+        
+        if not analysis:
+            stats['error'] = "Нет данных или ошибка анализа"
+            return stats
+        
+        # Создаем Note.md
+        note_file = self.create_obsidian_note(folder, analysis)
+        
+        if note_file:
+            stats['success'] = True
+            stats['new_tags'] = len(analysis.get('new_tags', []))
+        else:
+            stats['error'] = "Ошибка создания Note.md"
+        
+        return stats
+    
+    def process_all(self) -> dict:
+        """
+        Обрабатывает все папки
+        
+        Returns:
+            Общая статистика
+        """
+        print("\n" + "="*70)
+        print("🧠 МОДУЛЬ 3: AI АНАЛИЗ")
+        print("="*70)
+        print(f"📁 Директория: {self.content_dir}")
+        print(f"🏷️  База тегов: {self.tag_manager.tags_file}")
+        
+        # Находим папки
+        folders = self.find_content_folders()
+        
+        if not folders:
+            print("\n⚠️  Папки с контентом не найдены")
+            return {'total_folders': 0}
+        
+        print(f"📊 Найдено папок: {len(folders)}")
+        
+        # Общая статистика
+        total_stats = {
+            'total_folders': len(folders),
+            'already_processed': 0,
+            'successfully_processed': 0,
+            'errors': 0,
+            'total_new_tags': 0
+        }
+        
+        # Обрабатываем каждую папку
+        for i, folder in enumerate(folders, 1):
+            print(f"\n{'='*70}")
+            print(f"📂 [{i}/{len(folders)}] {folder.name}")
+            print(f"{'='*70}")
+            
+            stats = self.process_folder(folder)
+            
+            if stats['already_processed']:
+                total_stats['already_processed'] += 1
+            elif stats['success']:
+                total_stats['successfully_processed'] += 1
+                total_stats['total_new_tags'] += stats['new_tags']
+            else:
+                total_stats['errors'] += 1
+        
+        # Итоговая статистика
+        print("\n" + "="*70)
+        print("📊 ИТОГОВАЯ СТАТИСТИКА")
+        print("="*70)
+        print(f"Всего папок: {total_stats['total_folders']}")
+        print(f"Уже обработано: {total_stats['already_processed']}")
+        print(f"Успешно обработано: {total_stats['successfully_processed']}")
+        print(f"Новых тегов создано: {total_stats['total_new_tags']}")
+        if total_stats['errors'] > 0:
+            print(f"Ошибок: {total_stats['errors']}")
+        print("="*70)
+        
+        return total_stats
+
+
+def main():
+    """Точка входа"""
+    import argparse
+    
+    parser = argparse.ArgumentParser(
+        description="Модуль 3: AI анализ контента"
+    )
+    parser.add_argument(
+        '--dir',
+        type=Path,
+        default=Path('downloads'),
+        help='Директория с контентом (по умолчанию: downloads)'
+    )
+    parser.add_argument(
+        '--tags',
+        type=Path,
+        default=Path('tags.json'),
+        help='Файл с базой тегов (по умолчанию: tags.json)'
+    )
+    parser.add_argument(
+        '--folder',
+        type=str,
+        help='Обработать только одну папку (имя папки)'
+    )
+    
+    args = parser.parse_args()
+    
+    processor = AIProcessor(
+        content_dir=args.dir,
+        tags_file=args.tags
+    )
+    
+    if args.folder:
+        # Обработка одной папки
+        folder_path = args.dir / args.folder
+        if not folder_path.exists():
+            print(f"❌ Папка не найдена: {folder_path}")
+            sys.exit(1)
+        
+        print(f"\n🎯 Обработка одной папки: {args.folder}")
+        stats = processor.process_folder(folder_path)
+        
+        print("\n" + "="*70)
+        print("📊 СТАТИСТИКА")
+        print("="*70)
+        if stats['already_processed']:
+            print("⏭️  Папка уже обработана")
+        elif stats['success']:
+            print("✅ Успешно обработано")
+            if stats['new_tags'] > 0:
+                print(f"✨ Новых тегов: {stats['new_tags']}")
+        else:
+            print(f"❌ Ошибка: {stats['error']}")
+    else:
+        # Обработка всех папок
+        processor.process_all()
+
+
+if __name__ == "__main__":
+    main()

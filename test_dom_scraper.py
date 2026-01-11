@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+https://www.youtube.com/watch?v=cQjqRz4HH9M&t=1481s#!/usr/bin/env python3
 """
 Простой парсер комментариев через DOM (без GraphQL перехвата)
 """
