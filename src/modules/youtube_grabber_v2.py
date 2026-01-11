@@ -3,7 +3,7 @@ Production-Ready YouTube Grabber v2
 Применены лучшие практики из youtube-dl и Hitomi-Downloader
 """
 from pathlib import Path
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Any
 from dataclasses import dataclass
 import subprocess
 import json
@@ -489,6 +489,42 @@ class ProductionYouTubeGrabber:
             if cookie_file:
                 self.cookie_manager.mark_usage(cookie_file, success=False)
             raise
+    
+    def get_comments(
+        self,
+        url: str,
+        output_file: Optional[Path] = None,
+        max_comments: Optional[int] = 100,
+        sort_by: str = 'popular'
+    ) -> List[Dict[str, Any]]:
+        """
+        Получает комментарии с YouTube видео
+        
+        Args:
+            url: URL видео
+            output_file: Файл для сохранения (опционально)
+            max_comments: Максимальное количество комментариев
+            sort_by: Сортировка ('popular' или 'recent')
+        
+        Returns:
+            Список комментариев
+        """
+        try:
+            from .youtube_comments_downloader import YouTubeCommentsDownloader
+            
+            downloader = YouTubeCommentsDownloader()
+            result = downloader.download_comments(
+                url=url,
+                output_file=output_file,
+                max_comments=max_comments,
+                sort_by=sort_by
+            )
+            
+            return result['comments']
+            
+        except Exception as e:
+            print(f"⚠️  Ошибка загрузки комментариев: {e}")
+            return []
     
     def print_stats(self):
         """Выводит статистику загрузчика"""
