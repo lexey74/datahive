@@ -492,7 +492,7 @@ async def check_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         reverse=True
     )
     
-    video_extensions = ['.mp4', '.mov', '.avi', '.mkv', '.webm']
+    media_extensions = ['.mp4', '.mov', '.avi', '.mkv', '.webm', '.mp3', '.m4a', '.wav', '.flac', '.ogg']
     
     # Анализируем папки
     pending_transcribe = []
@@ -500,11 +500,11 @@ async def check_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     complete = []
     
     for folder in folders[:20]:  # Последние 20 папок
-        video_files = [f for f in folder.iterdir() if f.suffix.lower() in video_extensions]
+        media_files = [f for f in folder.iterdir() if f.suffix.lower() in media_extensions]
         has_transcript = (folder / "transcript.md").exists()
         has_analysis = (folder / "Note.md").exists()  # Модуль 3 создает Note.md
         
-        if video_files and not has_transcript:
+        if media_files and not has_transcript:
             pending_transcribe.append(folder.name[:40])
         elif has_transcript and not has_analysis:
             pending_ai.append(folder.name[:40])

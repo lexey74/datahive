@@ -285,6 +285,46 @@ processed: true
             print(f"❌ Ошибка сохранения: {e}")
             return None
     
+    def should_process_folder(self, folder: Path) -> tuple[bool, str]:
+        """
+        Проверяет, нужна ли AI обработка для папки
+        
+        Args:
+            folder: Папка для проверки
+            
+        Returns:
+            (нужна_обработка, причина)
+        """
+        # 1. Если есть Note.md - уже обработана
+        if self.has_analysis(folder):
+            return False, "Note.md существует"
+        
+        # 2. Проверяем наличие медиа файлов
+        media_extensions = ['.mp4', '.mov', '.avi', '.mkv', '.webm', '.mp3', '.m4a', '.wav', '.flac', '.ogg']
+        media_files = [
+            f for f in folder.iterdir() 
+            if f.is_file() and f.suffix.lower() in media_extensions
+        ]
+        
+        has_transcript = (folder / "transcript.md").exists()
+        has_description = (folder / "description.md").exists()
+        
+        # 3. Если есть медиа файлы
+        if media_files:
+            # Нужна транскрибация сначала
+            if not has_transcript:
+                return False, "есть медиа, но нет transcript.md (требуется транскрибация)"
+            # Есть транскрипция - можно обрабатывать
+            return True, "есть медиа + transcript.md"
+        
+        # 4. Если нет медиа файлов
+        if has_description:
+            # Только текстовая заметка - можно обрабатывать
+            return True, "текстовая заметка без медиа"
+        
+        # 5. Вообще нет контента
+        return False, "нет контента для обработки"
+    
     def process_folder(self, folder: Path) -> dict:
         """
         Обрабатывает одну папку
@@ -300,14 +340,22 @@ processed: true
             'already_processed': False,
             'success': False,
             'new_tags': 0,
-            'error': None
+            'error': None,
+            'skip_reason': None
         }
         
-        # Проверяем, не обработана ли уже
-        if self.has_analysis(folder):
-            print(f"⏭️  Пропуск: {folder.name} (Note.md существует)")
-            stats['already_processed'] = True
+        # Проверяем, нужна ли обработка
+        should_process, reason = self.should_process_folder(folder)
+        
+        if not should_process:
+            print(f"⏭️  Пропуск: {folder.name} ({reason})")
+            if "Note.md существует" in reason:
+                stats['already_processed'] = True
+            else:
+                stats['skip_reason'] = reason
             return stats
+        
+        print(f"✅ Обработка: {folder.name} ({reason})")
         
         # Анализируем
         analysis = self.analyze_content(folder)
@@ -354,6 +402,8 @@ processed: true
             'total_folders': len(folders),
             'already_processed': 0,
             'successfully_processed': 0,
+            'need_transcription': 0,
+            'no_content': 0,
             'errors': 0,
             'total_new_tags': 0
         }
@@ -371,6 +421,12 @@ processed: true
             elif stats['success']:
                 total_stats['successfully_processed'] += 1
                 total_stats['total_new_tags'] += stats['new_tags']
+            elif stats.get('skip_reason'):
+                reason = stats['skip_reason']
+                if "требуется транскрибация" in reason:
+                    total_stats['need_transcription'] += 1
+                elif "нет контента" in reason:
+                    total_stats['no_content'] += 1
             else:
                 total_stats['errors'] += 1
         
@@ -379,43 +435,17 @@ processed: true
         print("📊 ИТОГОВАЯ СТАТИСТИКА")
         print("="*70)
         print(f"Всего папок: {total_stats['total_folders']}")
-        print(f"Уже обработано: {total_stats['already_processed']}")
+        print(f"Уже обработано (Note.md): {total_stats['already_processed']}")
         print(f"Успешно обработано: {total_stats['successfully_processed']}")
         print(f"Новых тегов создано: {total_stats['total_new_tags']}")
-        if total_stats['errors'] > 0:
-            print(f"Ошибок: {total_stats['errors']}")
-        print("="*70)
         
-        # Если ничего не обработано, показываем что осталось
-        if total_stats['successfully_processed'] == 0:
-            print(f"\n⚠️  Новых анализов не создано")
-            
-            # Подсчитываем, что осталось обработать
-            video_extensions = ['.mp4', '.mov', '.avi', '.mkv', '.webm']
-            pending_transcribe = 0
-            pending_ai = 0
-            
-            for folder in folders:
-                has_transcript = (folder / "transcript.md").exists()
-                has_analysis = (folder / "Note.md").exists()  # Модуль 3 создает Note.md
-                
-                # Проверяем наличие видео файлов
-                video_files = [
-                    f for f in folder.iterdir() 
-                    if f.is_file() and f.suffix.lower() in video_extensions
-                ]
-                
-                if video_files and not has_transcript:
-                    pending_transcribe += 1
-                elif has_transcript and not has_analysis:
-                    pending_ai += 1
-            
-            if pending_transcribe > 0 or pending_ai > 0:
-                print(f"\n📋 Статус обработки:")
-                print(f"   🎤 Требуют транскрибации: {pending_transcribe}")
-                print(f"   🤖 Требуют AI анализа: {pending_ai}")
-            
-            print("="*70)
+        if total_stats['need_transcription'] > 0:
+            print(f"⏳ Требуют транскрибации: {total_stats['need_transcription']}")
+        if total_stats['no_content'] > 0:
+            print(f"⚠️  Нет контента: {total_stats['no_content']}")
+        if total_stats['errors'] > 0:
+            print(f"❌ Ошибок: {total_stats['errors']}")
+        print("="*70)
         
         return total_stats
 
