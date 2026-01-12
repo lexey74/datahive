@@ -332,7 +332,7 @@ class TranscriptionProcessor:
             
             for folder in folders:
                 has_transcript = (folder / "transcript.md").exists()
-                has_analysis = (folder / "analysis.md").exists()
+                has_analysis = (folder / "Note.md").exists()  # Модуль 3 создает Note.md
                 
                 # Проверяем наличие медиа файлов
                 media_files = [
