@@ -1,0 +1,1329 @@
+#!/usr/bin/env python3
+"""
+SecBrain Telegram Bot
+=====================
+
+Бот для сохранения контента из YouTube, Instagram и прямых загрузок.
+
+Функции:
+- URL YouTube/Instagram → скачивание + транскрибация
+- Медиа файлы (фото/видео) → запрос описания → сохранение
+- Текст → сохранение в description.md
+
+Использование:
+1. Создать бота через @BotFather
+2. Добавить токен в .env или передать через TELEGRAM_BOT_TOKEN
+3. Запустить: python telegram_bot.py
+"""
+
+import os
+import sys
+import re
+import asyncio
+import logging
+from pathlib import Path
+from datetime import datetime, timedelta
+from typing import Optional, Dict, Any
+from dataclasses import dataclass, field
+
+try:
+    import psutil
+    PSUTIL_AVAILABLE = True
+except ImportError:
+    PSUTIL_AVAILABLE = False
+    print("⚠️  psutil не установлен. Установите: pip install psutil")
+
+# Добавляем src в путь
+sys.path.insert(0, str(Path(__file__).parent / "src"))
+
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    MessageHandler,
+    CallbackQueryHandler,
+    ConversationHandler,
+    ContextTypes,
+    filters,
+)
+
+# Импорт модулей SecBrain
+from modules.content_router import ContentRouter
+from modules.downloader_base import DownloadSettings
+from modules.local_ears import LocalEars, TranscriptResult
+from modules.tag_manager import TagManager
+
+# Настройка логирования
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
+
+# ============================================================================
+# Конфигурация
+# ============================================================================
+
+@dataclass
+class BotConfig:
+    """Конфигурация бота"""
+    token: str = ""
+    downloads_dir: Path = Path("downloads")
+    allowed_users: list = field(default_factory=list)  # Пустой = все разрешены
+    whisper_model: str = "small"
+    whisper_threads: int = 16
+    
+    # Файлы для логов процессов
+    transcribe_log: Path = Path("logs/transcribe.log")
+    ai_log: Path = Path("logs/ai.log")
+    transcribe_pid: Path = Path("logs/transcribe.pid")
+    ai_pid: Path = Path("logs/ai.pid")
+    
+    @classmethod
+    def from_env(cls) -> "BotConfig":
+        """Загрузка конфигурации из окружения"""
+        token = os.getenv("TELEGRAM_BOT_TOKEN", "")
+        
+        # Попробуем загрузить из .env файла
+        env_file = Path(__file__).parent / ".env"
+        if env_file.exists() and not token:
+            with open(env_file) as f:
+                for line in f:
+                    if line.startswith("TELEGRAM_BOT_TOKEN="):
+                        token = line.split("=", 1)[1].strip().strip('"\'')
+                        break
+        
+        allowed_users_str = os.getenv("TELEGRAM_ALLOWED_USERS", "")
+        allowed_users = [int(u) for u in allowed_users_str.split(",") if u.strip()]
+        
+        config = cls(
+            token=token,
+            downloads_dir=Path(os.getenv("DOWNLOADS_DIR", "downloads")),
+            allowed_users=allowed_users,
+            whisper_model=os.getenv("WHISPER_MODEL", "small"),
+            whisper_threads=int(os.getenv("WHISPER_THREADS", "16")),
+        )
+        
+        # Создаём папку для логов
+        config.transcribe_log.parent.mkdir(parents=True, exist_ok=True)
+        
+        return config
+
+
+# ============================================================================
+# Состояния для ConversationHandler
+# ============================================================================
+
+WAITING_DESCRIPTION = 1
+WAITING_TITLE = 2
+
+
+# ============================================================================
+# Утилиты
+# ============================================================================
+
+def sanitize_filename(name: str, max_length: int = 80) -> str:
+    """Очистка имени для использования в пути к файлу"""
+    # Заменяем недопустимые символы
+    name = re.sub(r'[<>:"/\\|?*]', '_', name)
+    # Убираем множественные пробелы
+    name = re.sub(r'\s+', '_', name)
+    # Обрезаем до max_length
+    if len(name) > max_length:
+        name = name[:max_length]
+    return name.strip('_')
+
+
+def detect_url_type(text: str) -> Optional[str]:
+    """Определяет тип URL"""
+    text = text.strip()
+    
+    # YouTube patterns
+    youtube_patterns = [
+        r'(?:https?://)?(?:www\.)?youtube\.com/watch\?v=[\w-]+',
+        r'(?:https?://)?(?:www\.)?youtube\.com/shorts/[\w-]+',
+        r'(?:https?://)?youtu\.be/[\w-]+',
+        r'(?:https?://)?(?:www\.)?youtube\.com/live/[\w-]+',
+    ]
+    
+    for pattern in youtube_patterns:
+        if re.search(pattern, text, re.IGNORECASE):
+            return "youtube"
+    
+    # Instagram patterns
+    instagram_patterns = [
+        r'(?:https?://)?(?:www\.)?instagram\.com/p/[\w-]+',
+        r'(?:https?://)?(?:www\.)?instagram\.com/reel/[\w-]+',
+        r'(?:https?://)?(?:www\.)?instagram\.com/reels/[\w-]+',
+    ]
+    
+    for pattern in instagram_patterns:
+        if re.search(pattern, text, re.IGNORECASE):
+            return "instagram"
+    
+    return None
+
+
+def create_folder_name(content_type: str, title: str = "", source_id: str = "") -> str:
+    """Создаёт имя папки для контента"""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    if title:
+        safe_title = sanitize_filename(title, 60)
+        return f"{content_type}_{safe_title}_{timestamp}"
+    elif source_id:
+        return f"{content_type}_{source_id}_{timestamp}"
+    else:
+        return f"{content_type}_{timestamp}"
+
+
+# ============================================================================
+# Обработчики команд
+# ============================================================================
+
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обработчик команды /start"""
+    user = update.effective_user
+    
+    welcome_text = f"""
+👋 Привет, {user.first_name}!
+
+Я бот для сохранения контента в SecBrain.
+
+📥 **Что я умею:**
+
+1️⃣ **URL YouTube/Instagram**
+   Отправь ссылку - я скачаю и транскрибирую
+
+2️⃣ **Фото/Видео**
+   Отправь файл - я попрошу описание и сохраню
+
+3️⃣ **Текст**
+   Отправь текст - я сохраню как заметку
+
+📋 **Команды:**
+/start - Это сообщение
+/help - Подробная справка
+/status - Статус системы
+/check - Проверить состояние папок
+/transcribe - Транскрибировать последнее видео
+/url - Скачать по ссылке
+/ai - AI анализ (в разработке)
+/tags - Просмотр тегов (в разработке)
+/user - Информация о вас
+
+🚀 Просто отправь мне что-нибудь!
+"""
+    await update.message.reply_text(welcome_text, parse_mode='Markdown')
+
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обработчик команды /help"""
+    help_text = """
+📖 **Подробная справка**
+
+**🔗 URL (YouTube/Instagram):**
+• Обычные видео: youtube.com/watch?v=...
+• Shorts: youtube.com/shorts/...
+• Короткие ссылки: youtu.be/...
+• Instagram: instagram.com/p/... или /reel/...
+
+**📸 Медиа файлы:**
+• Фото: JPG, PNG, WEBP
+• Видео: MP4, MOV, AVI
+• После отправки попрошу описание
+
+**📝 Текст:**
+• Любой текст (не URL) сохраняется как заметка
+
+**⚙️ Команды обработки:**
+/transcribe - Запустить транскрибацию всех видео
+/ai - Запустить AI анализ и тегирование
+/check - Проверить статус обработки
+
+**📊 Процесс:**
+1. Создаётся папка в downloads/
+2. Сохраняется контент
+3. /transcribe → transcript.md (Whisper)
+4. /ai → analysis.md + теги (Ollama)
+
+⏱ Обработка выполняется в фоне, используйте /check для мониторинга.
+"""
+    await update.message.reply_text(help_text, parse_mode='Markdown')
+
+
+async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обработчик команды /status"""
+    config = context.bot_data.get('config', BotConfig())
+    
+    # Подсчёт папок в downloads
+    downloads_count = 0
+    if config.downloads_dir.exists():
+        downloads_count = len([d for d in config.downloads_dir.iterdir() if d.is_dir()])
+    
+    status_text = f"""
+📊 **Статус SecBrain Bot**
+
+📁 Папок в downloads: {downloads_count}
+🎤 Whisper модель: {config.whisper_model}
+⚙️ Потоков CPU: {config.whisper_threads}
+
+✅ Бот работает
+"""
+    await update.message.reply_text(status_text, parse_mode='Markdown')
+
+
+async def transcribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обработчик команды /transcribe - запуск Модуля 2 (транскрибация всех папок)"""
+    config: BotConfig = context.bot_data.get('config', BotConfig())
+    
+    if not config.downloads_dir.exists():
+        await update.message.reply_text("📁 Папка downloads пуста")
+        return
+    
+    # Проверяем, не запущен ли уже процесс
+    if config.transcribe_pid.exists():
+        try:
+            with open(config.transcribe_pid) as f:
+                pid = int(f.read().strip())
+            os.kill(pid, 0)
+            await update.message.reply_text(
+                f"⚠️ Транскрибация уже запущена (PID: {pid})\n\n"
+                f"Используйте /check для просмотра статуса"
+            )
+            return
+        except (ProcessLookupError, ValueError, OSError):
+            config.transcribe_pid.unlink(missing_ok=True)
+    
+    status_msg = await update.message.reply_text(
+        "🎤 **Модуль 2: Транскрибация**\n\n"
+        "Запускаю транскрибацию в фоновом режиме...",
+        parse_mode='Markdown'
+    )
+    
+    try:
+        # Запускаем module2 в отдельном процессе
+        import subprocess
+        
+        # Очищаем лог-файл
+        config.transcribe_log.write_text("")
+        
+        # Запускаем процесс
+        process = subprocess.Popen(
+            [sys.executable, "module2_transcribe.py"],
+            cwd=Path(__file__).parent,
+            stdout=open(config.transcribe_log, 'w'),
+            stderr=subprocess.STDOUT,
+            start_new_session=True  # Отвязываем от родительского процесса
+        )
+        
+        # Сохраняем PID
+        config.transcribe_pid.write_text(str(process.pid))
+        
+        await status_msg.edit_text(
+            f"✅ **Транскрибация запущена!**\n\n"
+            f"📝 PID: {process.pid}\n"
+            f"📋 Логи: `{config.transcribe_log}`\n\n"
+            f"Используйте /check для просмотра прогресса",
+            parse_mode='Markdown'
+        )
+        
+    except Exception as e:
+        logger.error(f"Transcription start error: {e}", exc_info=True)
+        await status_msg.edit_text(f"❌ Ошибка запуска: {str(e)[:200]}")
+
+
+def get_process_info(pid: int) -> Optional[Dict[str, Any]]:
+    """
+    Получает информацию о процессе
+    
+    Args:
+        pid: ID процесса
+        
+    Returns:
+        Словарь с информацией или None если процесс не найден
+    """
+    if not PSUTIL_AVAILABLE:
+        return None
+    
+    try:
+        process = psutil.Process(pid)
+        
+        # Время работы
+        create_time = datetime.fromtimestamp(process.create_time())
+        uptime = datetime.now() - create_time
+        
+        # Форматируем время работы
+        hours, remainder = divmod(int(uptime.total_seconds()), 3600)
+        minutes, seconds = divmod(remainder, 60)
+        if hours > 0:
+            uptime_str = f"{hours}ч {minutes}м {seconds}с"
+        elif minutes > 0:
+            uptime_str = f"{minutes}м {seconds}с"
+        else:
+            uptime_str = f"{seconds}с"
+        
+        # CPU и память
+        cpu_percent = process.cpu_percent(interval=0.1)
+        memory_info = process.memory_info()
+        memory_mb = memory_info.rss / 1024 / 1024  # RSS в МБ
+        
+        return {
+            'uptime': uptime_str,
+            'cpu_percent': cpu_percent,
+            'memory_mb': memory_mb,
+            'status': process.status()
+        }
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
+        return None
+
+
+async def check_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обработчик команды /check - проверка текущего состояния обработки"""
+    config: BotConfig = context.bot_data.get('config', BotConfig())
+    
+    if not config.downloads_dir.exists():
+        await update.message.reply_text("📁 Папка downloads пуста")
+        return
+    
+    # Проверяем, запущена ли транскрибация
+    transcribe_running = False
+    if config.transcribe_pid.exists():
+        try:
+            with open(config.transcribe_pid) as f:
+                pid = int(f.read().strip())
+            # Проверяем, жив ли процесс
+            os.kill(pid, 0)  # Signal 0 - проверка существования
+            transcribe_running = True
+        except (ProcessLookupError, ValueError, OSError):
+            # Процесс не найден, удаляем pid файл
+            config.transcribe_pid.unlink(missing_ok=True)
+    
+    # Проверяем, запущена ли AI обработка
+    ai_running = False
+    if config.ai_pid.exists():
+        try:
+            with open(config.ai_pid) as f:
+                pid = int(f.read().strip())
+            os.kill(pid, 0)
+            ai_running = True
+        except (ProcessLookupError, ValueError, OSError):
+            config.ai_pid.unlink(missing_ok=True)
+    
+    # Если транскрибация запущена
+    if transcribe_running:
+        # Получаем информацию о процессе
+        process_info = get_process_info(pid)
+        
+        log_content = ""
+        if config.transcribe_log.exists():
+            with open(config.transcribe_log) as f:
+                lines = f.readlines()
+                # Берём последние 15 строк
+                log_content = ''.join(lines[-15:])
+        
+        response = f"""
+🎤 **Модуль 2: Транскрибация**
+
+⚙️ Процесс запущен (PID: {pid})
+"""
+        
+        # Добавляем системную информацию если доступна
+        if process_info:
+            response += f"""
+📊 **Системная информация:**
+⏱ Время работы: {process_info['uptime']}
+💻 Загрузка CPU: {process_info['cpu_percent']:.1f}%
+🧠 Память: {process_info['memory_mb']:.1f} МБ
+"""
+        
+        response += f"""
+📋 **Последние логи:**
+```
+{log_content if log_content else 'Нет данных'}
+```
+
+Используйте /check снова для обновления статуса
+"""
+        await update.message.reply_text(response, parse_mode='Markdown')
+        return
+    
+    # Если AI обработка запущена
+    if ai_running:
+        # Получаем информацию о процессе
+        process_info = get_process_info(pid)
+        
+        log_content = ""
+        if config.ai_log.exists():
+            with open(config.ai_log) as f:
+                lines = f.readlines()
+                log_content = ''.join(lines[-15:])
+        
+        response = f"""
+🤖 **Модуль 3: AI Анализ**
+
+⚙️ Процесс запущен (PID: {pid})
+"""
+        
+        # Добавляем системную информацию если доступна
+        if process_info:
+            response += f"""
+📊 **Системная информация:**
+⏱ Время работы: {process_info['uptime']}
+💻 Загрузка CPU: {process_info['cpu_percent']:.1f}%
+🧠 Память: {process_info['memory_mb']:.1f} МБ
+"""
+        
+        response += f"""
+📋 **Последние логи:**
+```
+{log_content if log_content else 'Нет данных'}
+```
+
+Используйте /check снова для обновления статуса
+"""
+        await update.message.reply_text(response, parse_mode='Markdown')
+        return
+    
+    # Если ничего не запущено - показываем необработанные папки
+    folders = sorted(
+        [d for d in config.downloads_dir.iterdir() if d.is_dir()],
+        key=lambda x: x.stat().st_mtime,
+        reverse=True
+    )
+    
+    video_extensions = ['.mp4', '.mov', '.avi', '.mkv', '.webm']
+    
+    # Анализируем папки
+    pending_transcribe = []
+    pending_ai = []
+    complete = []
+    
+    for folder in folders[:20]:  # Последние 20 папок
+        video_files = [f for f in folder.iterdir() if f.suffix.lower() in video_extensions]
+        has_transcript = (folder / "transcript.md").exists()
+        has_analysis = (folder / "analysis.md").exists()
+        
+        if video_files and not has_transcript:
+            pending_transcribe.append(folder.name[:40])
+        elif has_transcript and not has_analysis:
+            pending_ai.append(folder.name[:40])
+        elif has_transcript and has_analysis:
+            complete.append(folder.name[:40])
+    
+    # Формируем отчёт
+    report = "� **Статус обработки**\n\n"
+    report += "⏸ Ни один процесс не запущен\n\n"
+    
+    if pending_transcribe:
+        report += f"🎤 **Ожидают транскрибации:** {len(pending_transcribe)}\n"
+        for name in pending_transcribe[:5]:
+            report += f"  • `{name}`\n"
+        if len(pending_transcribe) > 5:
+            report += f"  ... и ещё {len(pending_transcribe) - 5}\n"
+        report += "\n💡 Используйте /transcribe для запуска\n\n"
+    
+    if pending_ai:
+        report += f"🤖 **Ожидают AI анализа:** {len(pending_ai)}\n"
+        for name in pending_ai[:5]:
+            report += f"  • `{name}`\n"
+        if len(pending_ai) > 5:
+            report += f"  ... и ещё {len(pending_ai) - 5}\n"
+        report += "\n💡 Используйте /ai для запуска\n\n"
+    
+    if complete:
+        report += f"✅ **Полностью обработано:** {len(complete)}\n"
+    
+    if not pending_transcribe and not pending_ai and not complete:
+        report += "� Нет папок для обработки"
+    
+    await update.message.reply_text(report, parse_mode='Markdown')
+
+
+async def url_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обработчик команды /url - запрос URL"""
+    await update.message.reply_text(
+        "🔗 Отправьте мне URL:\n\n"
+        "• YouTube (видео/shorts)\n"
+        "• Instagram (посты/reels)\n\n"
+        "Или просто отправьте ссылку без команды!"
+    )
+
+
+async def tags_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обработчик команды /tags - просмотр всех тегов в системе"""
+    try:
+        # Создаём TagManager
+        tag_manager = TagManager()
+        
+        # Получаем все теги
+        all_tags = tag_manager.get_all_tags()
+        
+        if not all_tags:
+            await update.message.reply_text(
+                "🏷 **Теги**\n\n"
+                "Пока нет ни одного тега в системе.\n"
+                "Теги будут добавляться автоматически при AI-анализе контента."
+            )
+            return
+        
+        # Форматируем вывод: группируем по категориям или просто список
+        tags_text = "🏷 **Все теги в системе**\n\n"
+        tags_text += f"📊 Всего тегов: {len(all_tags)}\n\n"
+        
+        # Выводим теги в несколько колонок для компактности
+        tags_per_row = 3
+        rows = []
+        for i in range(0, len(all_tags), tags_per_row):
+            row_tags = all_tags[i:i+tags_per_row]
+            rows.append(" • ".join(f"`{tag}`" for tag in row_tags))
+        
+        tags_text += "\n".join(rows)
+        tags_text += "\n\n💡 Используйте /ai для автоматического тегирования контента"
+        
+        await update.message.reply_text(tags_text, parse_mode='Markdown')
+        
+    except Exception as e:
+        logger.error(f"Error in tags_command: {e}", exc_info=True)
+        await update.message.reply_text(
+            "❌ Ошибка при загрузке тегов.\n"
+            f"Детали: {str(e)[:200]}"
+        )
+
+
+async def user_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обработчик команды /user - информация о пользователе"""
+    user = update.effective_user
+    
+    user_info = f"""
+👤 **Информация о пользователе**
+
+🆔 ID: `{user.id}`
+📝 Username: @{user.username if user.username else 'не указан'}
+👤 Имя: {user.first_name} {user.last_name if user.last_name else ''}
+🤖 Бот: {'Да' if user.is_bot else 'Нет'}
+"""
+    await update.message.reply_text(user_info, parse_mode='Markdown')
+
+
+async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обработчик неизвестных команд"""
+    command = update.message.text.split()[0] if update.message.text else "/"
+    await update.message.reply_text(
+        f"❌ **Команда не найдена**\n\n"
+        f"Команда `{command}` не существует.\n"
+        f"Используйте /help для списка доступных команд.",
+        parse_mode='Markdown'
+    )
+
+
+async def ai_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Обработчик команды /ai - запуск Модуля 3 (AI анализ и тегирование)"""
+    config: BotConfig = context.bot_data.get('config', BotConfig())
+    
+    if not config.downloads_dir.exists():
+        await update.message.reply_text("📁 Папка downloads пуста")
+        return
+    
+    # Проверяем, не запущен ли уже процесс
+    if config.ai_pid.exists():
+        try:
+            with open(config.ai_pid) as f:
+                pid = int(f.read().strip())
+            os.kill(pid, 0)
+            await update.message.reply_text(
+                f"⚠️ AI анализ уже запущен (PID: {pid})\n\n"
+                f"Используйте /check для просмотра статуса"
+            )
+            return
+        except (ProcessLookupError, ValueError, OSError):
+            config.ai_pid.unlink(missing_ok=True)
+    
+    status_msg = await update.message.reply_text(
+        "🤖 **Модуль 3: AI Анализ**\n\n"
+        "Запускаю AI обработку в фоновом режиме...",
+        parse_mode='Markdown'
+    )
+    
+    try:
+        # Запускаем module3 в отдельном процессе
+        import subprocess
+        
+        # Очищаем лог-файл
+        config.ai_log.write_text("")
+        
+        # Запускаем процесс
+        process = subprocess.Popen(
+            [sys.executable, "module3_analyze.py"],
+            cwd=Path(__file__).parent,
+            stdout=open(config.ai_log, 'w'),
+            stderr=subprocess.STDOUT,
+            start_new_session=True
+        )
+        
+        # Сохраняем PID
+        config.ai_pid.write_text(str(process.pid))
+        
+        await status_msg.edit_text(
+            f"✅ **AI Анализ запущен!**\n\n"
+            f"📝 PID: {process.pid}\n"
+            f"📋 Логи: `{config.ai_log}`\n\n"
+            f"Используйте /check для просмотра прогресса",
+            parse_mode='Markdown'
+        )
+        
+    except Exception as e:
+        logger.error(f"AI processing start error: {e}", exc_info=True)
+        await status_msg.edit_text(f"❌ Ошибка запуска: {str(e)[:200]}")
+
+
+# ============================================================================
+# Обработка URL
+# ============================================================================
+
+async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Обработка URL YouTube/Instagram"""
+    config: BotConfig = context.bot_data.get('config', BotConfig())
+    url = update.message.text.strip()
+    url_type = detect_url_type(url)
+    
+    if not url_type:
+        return ConversationHandler.END  # Не URL, пропускаем
+    
+    # Отправляем сообщение о начале обработки
+    status_msg = await update.message.reply_text(
+        f"⏳ Начинаю обработку {url_type.upper()} ссылки...\n"
+        f"Это может занять несколько минут."
+    )
+    
+    try:
+        # Настройки загрузки
+        cookies_dir = Path('cookies')
+        
+        # Ищем Instagram cookies
+        instagram_cookies = None
+        if (cookies_dir / 'instagram_cookies.txt').exists():
+            instagram_cookies = cookies_dir / 'instagram_cookies.txt'
+        elif (cookies_dir / 'instagram.txt').exists():
+            instagram_cookies = cookies_dir / 'instagram.txt'
+        
+        # Проверяем наличие YouTube cookies
+        youtube_cookies_files = list(cookies_dir.glob('youtube_cookies*.txt'))
+        youtube_cookies_dir = cookies_dir if youtube_cookies_files else None
+        
+        settings = DownloadSettings(
+            download_video=True,
+            download_comments=False,
+            video_quality='best',
+            max_comments=100,
+            instagram_cookies=instagram_cookies,
+            youtube_cookies_dir=youtube_cookies_dir
+        )
+        
+        # Создаём роутер
+        router = ContentRouter(settings)
+        
+        # Устанавливаем output_dir для всех downloaders
+        for downloader in router.downloaders:
+            downloader.output_dir = config.downloads_dir
+        
+        # Скачиваем контент
+        await status_msg.edit_text("📥 Скачиваю контент...")
+        
+        # Запускаем в отдельном потоке (синхронный код)
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            None, 
+            lambda: router.download(url)
+        )
+        
+        if not result or not result.folder_path:
+            await status_msg.edit_text("❌ Не удалось скачать контент")
+            return ConversationHandler.END
+        
+        output_dir = Path(result.folder_path)
+        
+        # Переименовываем папку во временную
+        temp_folder_name = f"temp_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        temp_output_dir = config.downloads_dir / temp_folder_name
+        output_dir.rename(temp_output_dir)
+        output_dir = temp_output_dir
+        
+        # Проверяем, есть ли видео для транскрибации
+        video_extensions = ['.mp4', '.mov', '.avi', '.mkv', '.webm']
+        video_files = [
+            f for f in output_dir.iterdir() 
+            if f.suffix.lower() in video_extensions
+        ]
+        
+        if video_files:
+            await status_msg.edit_text("🎤 Транскрибирую видео...")
+            
+            # Инициализируем Whisper
+            ears = LocalEars(
+                model_size=config.whisper_model,
+                num_threads=config.whisper_threads
+            )
+            
+            # Транскрибируем первое видео
+            transcript_result = await loop.run_in_executor(
+                None,
+                lambda: ears.transcribe(video_files[0])
+            )
+            
+            if transcript_result:
+                # Сохраняем транскрипт
+                transcript_path = output_dir / "transcript.md"
+                with open(transcript_path, 'w', encoding='utf-8') as f:
+                    f.write(f"# Транскрипция\n\n")
+                    f.write(f"**Язык:** {transcript_result.language}\n")
+                    f.write(f"**Длительность:** {transcript_result.duration:.1f} сек\n\n")
+                    f.write("## С таймкодами\n\n")
+                    f.write(transcript_result.timed_transcript)
+                    f.write("\n\n## Полный текст\n\n")
+                    f.write(transcript_result.full_text)
+        
+        # Сохраняем временную папку в контексте
+        context.user_data['temp_folder'] = str(output_dir)
+        context.user_data['content_type'] = url_type
+        
+        # Формируем отчёт и запрашиваем название
+        files_list = [f.name for f in output_dir.iterdir() if f.is_file()]
+        
+        success_text = f"""
+✅ **Контент скачан!**
+
+📁 Файлы:
+{chr(10).join('• ' + f for f in files_list[:10])}
+{'...' if len(files_list) > 10 else ''}
+
+{'🎤 Транскрипт создан!' if video_files else ''}
+
+📝 **Как озаглавим эту информацию?**
+Отправьте название (или /skip для автоматического, /show для просмотра)
+"""
+        await status_msg.edit_text(success_text, parse_mode='Markdown')
+        
+        return WAITING_TITLE
+        
+    except Exception as e:
+        logger.error(f"Error processing URL: {e}", exc_info=True)
+        await status_msg.edit_text(f"❌ Ошибка: {str(e)[:200]}")
+        return ConversationHandler.END
+
+
+# ============================================================================
+# Обработка медиа файлов
+# ============================================================================
+
+async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Обработка фото/видео от пользователя"""
+    config: BotConfig = context.bot_data.get('config', BotConfig())
+    
+    # Определяем тип медиа
+    if update.message.photo:
+        # Берём фото максимального разрешения
+        photo = update.message.photo[-1]
+        file_id = photo.file_id
+        media_type = "photo"
+        file_ext = ".jpg"
+    elif update.message.video:
+        file_id = update.message.video.file_id
+        media_type = "video"
+        file_ext = ".mp4"
+    elif update.message.document:
+        doc = update.message.document
+        file_id = doc.file_id
+        media_type = "document"
+        # Определяем расширение
+        if doc.file_name:
+            file_ext = Path(doc.file_name).suffix or ".bin"
+        else:
+            file_ext = ".bin"
+    else:
+        return ConversationHandler.END
+    
+    # Создаём папку
+    folder_name = create_folder_name(f"telegram_{media_type}")
+    output_dir = config.downloads_dir / folder_name
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Скачиваем файл
+    status_msg = await update.message.reply_text("📥 Скачиваю файл...")
+    
+    try:
+        file = await context.bot.get_file(file_id)
+        file_path = output_dir / f"media{file_ext}"
+        await file.download_to_drive(file_path)
+        
+        # Сохраняем caption если есть
+        if update.message.caption:
+            caption_path = output_dir / "caption.md"
+            with open(caption_path, 'w', encoding='utf-8') as f:
+                f.write(f"# Caption\n\n{update.message.caption}")
+        
+        # Сохраняем информацию для описания
+        context.user_data['pending_media'] = {
+            'output_dir': str(output_dir),
+            'file_path': str(file_path),
+            'media_type': media_type,
+        }
+        
+        # Если это видео, предлагаем транскрибировать
+        if media_type == "video":
+            keyboard = [
+                [
+                    InlineKeyboardButton("🎤 Транскрибировать", callback_data="transcribe"),
+                    InlineKeyboardButton("⏭ Пропустить", callback_data="skip_transcribe"),
+                ]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await status_msg.edit_text(
+                f"✅ Файл сохранён!\n\n"
+                f"📂 Папка: `{folder_name}`\n\n"
+                f"Транскрибировать видео?",
+                reply_markup=reply_markup,
+                parse_mode='Markdown'
+            )
+        else:
+            await status_msg.edit_text(
+                f"✅ Файл сохранён!\n\n"
+                f"📂 Папка: `{folder_name}`\n\n"
+                f"Отправьте описание для этого файла\n"
+                f"(или /skip чтобы пропустить)"
+            )
+        
+        return WAITING_DESCRIPTION
+        
+    except Exception as e:
+        logger.error(f"Error downloading media: {e}", exc_info=True)
+        await status_msg.edit_text(f"❌ Ошибка загрузки: {str(e)[:200]}")
+        return ConversationHandler.END
+
+
+async def handle_transcribe_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Обработка callback кнопки транскрибации"""
+    query = update.callback_query
+    await query.answer()
+    
+    config: BotConfig = context.bot_data.get('config', BotConfig())
+    pending = context.user_data.get('pending_media', {})
+    
+    if query.data == "transcribe" and pending.get('file_path'):
+        await query.edit_message_text("🎤 Транскрибирую видео...\nЭто может занять несколько минут.")
+        
+        try:
+            file_path = Path(pending['file_path'])
+            output_dir = Path(pending['output_dir'])
+            
+            # Транскрибируем
+            ears = LocalEars(
+                model_size=config.whisper_model,
+                num_threads=config.whisper_threads
+            )
+            
+            loop = asyncio.get_event_loop()
+            transcript_result = await loop.run_in_executor(
+                None,
+                lambda: ears.transcribe(file_path)
+            )
+            
+            if transcript_result:
+                # Сохраняем
+                transcript_path = output_dir / "transcript.md"
+                with open(transcript_path, 'w', encoding='utf-8') as f:
+                    f.write(f"# Транскрипция\n\n")
+                    f.write(f"**Язык:** {transcript_result.language}\n")
+                    f.write(f"**Длительность:** {transcript_result.duration:.1f} сек\n\n")
+                    f.write("## С таймкодами\n\n")
+                    f.write(transcript_result.timed_transcript)
+                    f.write("\n\n## Полный текст\n\n")
+                    f.write(transcript_result.full_text)
+                
+                await query.edit_message_text(
+                    f"✅ Транскрипция готова!\n\n"
+                    f"📂 Папка: `{output_dir.name}`\n\n"
+                    f"Отправьте описание для этого видео\n"
+                    f"(или /skip чтобы пропустить)",
+                    parse_mode='Markdown'
+                )
+            else:
+                await query.edit_message_text(
+                    "⚠️ Не удалось транскрибировать\n\n"
+                    "Отправьте описание для этого видео\n"
+                    "(или /skip чтобы пропустить)"
+                )
+                
+        except Exception as e:
+            logger.error(f"Transcription error: {e}", exc_info=True)
+            await query.edit_message_text(
+                f"❌ Ошибка транскрибации: {str(e)[:100]}\n\n"
+                "Отправьте описание (или /skip)"
+            )
+    
+    elif query.data == "skip_transcribe":
+        await query.edit_message_text(
+            "⏭ Транскрибация пропущена\n\n"
+            "Отправьте описание для этого файла\n"
+            "(или /skip чтобы пропустить)"
+        )
+    
+    return WAITING_DESCRIPTION
+
+
+async def handle_description(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Получение описания от пользователя"""
+    pending = context.user_data.get('pending_media', {})
+    
+    if not pending:
+        await update.message.reply_text("⚠️ Нет ожидающего файла")
+        return ConversationHandler.END
+    
+    output_dir = Path(pending['output_dir'])
+    description = update.message.text
+    
+    # Сохраняем описание
+    desc_path = output_dir / "description.md"
+    with open(desc_path, 'w', encoding='utf-8') as f:
+        f.write(f"# Описание\n\n{description}")
+    
+    # Очищаем состояние
+    context.user_data.pop('pending_media', None)
+    
+    await update.message.reply_text(
+        f"✅ Описание сохранено!\n\n"
+        f"📂 Папка: `{output_dir.name}`",
+        parse_mode='Markdown'
+    )
+    
+    return ConversationHandler.END
+
+
+async def skip_description(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Пропуск описания"""
+    pending = context.user_data.get('pending_media', {})
+    
+    if pending:
+        output_dir = Path(pending['output_dir'])
+        await update.message.reply_text(
+            f"⏭ Описание пропущено\n\n"
+            f"📂 Папка: `{output_dir.name}`",
+            parse_mode='Markdown'
+        )
+    
+    context.user_data.pop('pending_media', None)
+    return ConversationHandler.END
+
+
+# ============================================================================
+# Обработка текста
+# ============================================================================
+
+async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Обработка текстовых сообщений (не URL)"""
+    config: BotConfig = context.bot_data.get('config', BotConfig())
+    text = update.message.text.strip()
+    
+    # Игнорируем команды (начинаются с "/")
+    if text.startswith('/'):
+        return ConversationHandler.END
+    
+    # Проверяем, не URL ли это
+    if detect_url_type(text):
+        return await handle_url(update, context)
+    
+    # Создаём временную папку для заметки
+    temp_folder_name = f"temp_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    output_dir = config.downloads_dir / temp_folder_name
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Сохраняем текст
+    desc_path = output_dir / "description.md"
+    with open(desc_path, 'w', encoding='utf-8') as f:
+        f.write(f"# Заметка\n\n")
+        f.write(f"**Дата:** {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n")
+        f.write(text)
+    
+    # Сохраняем временную папку в контексте
+    context.user_data['temp_folder'] = str(output_dir)
+    context.user_data['content_type'] = 'note'
+    
+    await update.message.reply_text(
+        f"📝 Заметка сохранена!\n\n"
+        f"**Как озаглавим эту информацию?**\n"
+        f"Отправьте название (или /skip для автоматического, /show для просмотра)"
+    )
+    
+    return WAITING_TITLE
+
+
+# ============================================================================
+# Обработка названия
+# ============================================================================
+
+async def handle_title(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Получение названия от пользователя и переименование папки"""
+    config: BotConfig = context.bot_data.get('config', BotConfig())
+    title = update.message.text.strip()
+    
+    temp_folder = context.user_data.get('temp_folder')
+    content_type = context.user_data.get('content_type', 'content')
+    
+    if not temp_folder:
+        await update.message.reply_text("❌ Временная папка не найдена")
+        return ConversationHandler.END
+    
+    temp_dir = Path(temp_folder)
+    
+    if not temp_dir.exists():
+        await update.message.reply_text("❌ Временная папка не существует")
+        return ConversationHandler.END
+    
+    try:
+        # Создаём безопасное имя файла из названия
+        safe_title = sanitize_filename(title, max_length=60)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        # Формируем новое имя папки
+        new_folder_name = f"{content_type}_{safe_title}_{timestamp}"
+        new_dir = config.downloads_dir / new_folder_name
+        
+        # Переименовываем папку
+        temp_dir.rename(new_dir)
+        
+        # Очищаем контекст
+        context.user_data.pop('temp_folder', None)
+        context.user_data.pop('content_type', None)
+        
+        await update.message.reply_text(
+            f"✅ **Готово!**\n\n"
+            f"📂 Папка: `{new_folder_name}`",
+            parse_mode='Markdown'
+        )
+        
+    except Exception as e:
+        logger.error(f"Error renaming folder: {e}", exc_info=True)
+        await update.message.reply_text(f"❌ Ошибка переименования: {str(e)[:200]}")
+    
+    return ConversationHandler.END
+
+
+async def show_files(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Отправка скачанных файлов в чат для предпросмотра"""
+    temp_folder = context.user_data.get('temp_folder')
+    
+    if not temp_folder:
+        await update.message.reply_text("❌ Временная папка не найдена")
+        return WAITING_TITLE
+    
+    temp_dir = Path(temp_folder)
+    
+    if not temp_dir.exists():
+        await update.message.reply_text("❌ Временная папка не существует")
+        return WAITING_TITLE
+    
+    try:
+        # Находим медиа файлы (изображения и видео)
+        image_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.webp'}
+        video_extensions = {'.mp4', '.mov', '.avi', '.mkv', '.webm'}
+        audio_extensions = {'.mp3', '.wav', '.ogg', '.m4a'}
+        
+        media_files = []
+        for file in temp_dir.iterdir():
+            if file.is_file() and not file.name.startswith('.'):
+                ext = file.suffix.lower()
+                if ext in image_extensions or ext in video_extensions or ext in audio_extensions:
+                    media_files.append(file)
+        
+        if not media_files:
+            await update.message.reply_text(
+                "📄 В этой папке нет медиа-файлов для предпросмотра.\n\n"
+                "📝 Как озаглавим эту информацию?\n"
+                "Отправьте название (или /skip для автоматического, /show для просмотра)"
+            )
+            return WAITING_TITLE
+        
+        # Отправляем файлы
+        await update.message.reply_text(f"📤 Отправляю {len(media_files)} файл(ов)...")
+        
+        for file in media_files[:10]:  # Ограничение 10 файлов за раз
+            try:
+                ext = file.suffix.lower()
+                
+                if ext in image_extensions:
+                    with open(file, 'rb') as f:
+                        await update.message.reply_photo(
+                            photo=f,
+                            caption=f"🖼️ {file.name}"
+                        )
+                elif ext in video_extensions:
+                    with open(file, 'rb') as f:
+                        await update.message.reply_video(
+                            video=f,
+                            caption=f"🎬 {file.name}"
+                        )
+                elif ext in audio_extensions:
+                    with open(file, 'rb') as f:
+                        await update.message.reply_audio(
+                            audio=f,
+                            caption=f"🎵 {file.name}"
+                        )
+                        
+            except Exception as e:
+                logger.error(f"Error sending file {file.name}: {e}")
+                await update.message.reply_text(f"⚠️ Не удалось отправить {file.name}")
+        
+        if len(media_files) > 10:
+            await update.message.reply_text(f"ℹ️ Показано первые 10 из {len(media_files)} файлов")
+        
+        await update.message.reply_text(
+            "📝 Как озаглавим эту информацию?\n"
+            "Отправьте название (или /skip для автоматического, /show для повторного просмотра)"
+        )
+        
+    except Exception as e:
+        logger.error(f"Error showing files: {e}", exc_info=True)
+        await update.message.reply_text(f"❌ Ошибка: {str(e)[:200]}")
+    
+    return WAITING_TITLE
+
+
+async def skip_title(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Пропуск названия - использование автоматического"""
+    config: BotConfig = context.bot_data.get('config', BotConfig())
+    
+    temp_folder = context.user_data.get('temp_folder')
+    content_type = context.user_data.get('content_type', 'content')
+    
+    if not temp_folder:
+        await update.message.reply_text("❌ Временная папка не найдена")
+        return ConversationHandler.END
+    
+    temp_dir = Path(temp_folder)
+    
+    if not temp_dir.exists():
+        await update.message.reply_text("❌ Временная папка не существует")
+        return ConversationHandler.END
+    
+    try:
+        # Используем временное имя или генерируем автоматическое
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        new_folder_name = f"{content_type}_auto_{timestamp}"
+        new_dir = config.downloads_dir / new_folder_name
+        
+        # Переименовываем папку
+        temp_dir.rename(new_dir)
+        
+        # Очищаем контекст
+        context.user_data.pop('temp_folder', None)
+        context.user_data.pop('content_type', None)
+        
+        await update.message.reply_text(
+            f"⏭ **Автоматическое название**\n\n"
+            f"📂 Папка: `{new_folder_name}`",
+            parse_mode='Markdown'
+        )
+        
+    except Exception as e:
+        logger.error(f"Error renaming folder: {e}", exc_info=True)
+        await update.message.reply_text(f"❌ Ошибка переименования: {str(e)[:200]}")
+    
+    return ConversationHandler.END
+
+
+# ============================================================================
+# Главная функция
+# ============================================================================
+
+def main():
+    """Запуск бота"""
+    # Загружаем конфигурацию
+    config = BotConfig.from_env()
+    
+    if not config.token:
+        print("❌ Ошибка: TELEGRAM_BOT_TOKEN не установлен!")
+        print("\nУстановите токен одним из способов:")
+        print("1. export TELEGRAM_BOT_TOKEN='your_token'")
+        print("2. Создайте .env файл с TELEGRAM_BOT_TOKEN=your_token")
+        sys.exit(1)
+    
+    # Создаём папку downloads
+    config.downloads_dir.mkdir(parents=True, exist_ok=True)
+    
+    print(f"""
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🤖 SecBrain Telegram Bot
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📁 Downloads: {config.downloads_dir}
+🎤 Whisper:   {config.whisper_model} ({config.whisper_threads} потоков)
+👥 Users:     {'Все' if not config.allowed_users else config.allowed_users}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🚀 Бот запущен! Нажмите Ctrl+C для остановки.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+""")
+    
+    # Создаём приложение
+    application = Application.builder().token(config.token).build()
+    
+    # Сохраняем конфигурацию
+    application.bot_data['config'] = config
+    
+    # ConversationHandler для медиа с описанием
+    media_conv_handler = ConversationHandler(
+        entry_points=[
+            MessageHandler(filters.PHOTO | filters.VIDEO | filters.Document.ALL, handle_media),
+        ],
+        states={
+            WAITING_DESCRIPTION: [
+                CallbackQueryHandler(handle_transcribe_callback),
+                CommandHandler("skip", skip_description),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_description),
+            ],
+        },
+        fallbacks=[
+            CommandHandler("cancel", skip_description),
+        ],
+    )
+    
+    # ConversationHandler для URL/текста с запросом названия
+    content_conv_handler = ConversationHandler(
+        entry_points=[
+            MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text),
+        ],
+        states={
+            WAITING_TITLE: [
+                CommandHandler("skip", skip_title),
+                CommandHandler("show", show_files),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_title),
+            ],
+        },
+        fallbacks=[
+            CommandHandler("cancel", skip_title),
+        ],
+    )
+    
+    # Регистрируем обработчики
+    application.add_handler(CommandHandler("start", start_command))
+    application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("status", status_command))
+    application.add_handler(CommandHandler("check", check_command))
+    application.add_handler(CommandHandler("transcribe", transcribe_command))
+    application.add_handler(CommandHandler("url", url_command))
+    application.add_handler(CommandHandler("ai", ai_command))
+    application.add_handler(CommandHandler("tags", tags_command))
+    application.add_handler(CommandHandler("user", user_command))
+    application.add_handler(media_conv_handler)
+    application.add_handler(content_conv_handler)
+    
+    # Обработчик неизвестных команд (должен быть последним)
+    application.add_handler(MessageHandler(filters.COMMAND, unknown_command))
+    
+    # Запускаем бота
+    application.run_polling(allowed_updates=Update.ALL_TYPES)
+
+
+if __name__ == "__main__":
+    main()

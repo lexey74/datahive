@@ -136,48 +136,35 @@ Output: strictly JSON.
         print("   ⏳ Отправка запроса к модели...")
         
         try:
-            import signal
             from rich.progress import Progress, SpinnerColumn, TextColumn
             from rich.console import Console
             
             console = Console()
             
-            # Функция для timeout
-            def timeout_handler(signum, frame):
-                raise TimeoutError("AI анализ превысил timeout (180 секунд)")
-            
-            # Устанавливаем timeout 180 секунд (3 минуты для медленного VPS)
-            signal.signal(signal.SIGALRM, timeout_handler)
-            signal.alarm(180)
-            
-            try:
-                with Progress(
-                    SpinnerColumn(),
-                    TextColumn("[progress.description]{task.description}"),
-                    console=console,
-                    transient=True
-                ) as progress:
-                    task = progress.add_task("   Анализ через AI...", total=None)
-                    
-                    response = self.client.chat(
-                        model=self.model,
-                        messages=[
-                            {'role': 'system', 'content': system_prompt},
-                            {'role': 'user', 'content': user_prompt}
-                        ],
-                        format='json',  # Требуем JSON ответ
-                        options={
-                            'temperature': 0.7,
-                            'num_predict': 500,  # Уменьшено для ускорения
-                            'num_thread': self.num_threads if self.num_threads else 8,
-                            'num_ctx': self.num_ctx if self.num_ctx else 8192
-                        }
-                    )
-                    
-                    progress.update(task, completed=True)
-            finally:
-                # Отменяем alarm
-                signal.alarm(0)
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                console=console,
+                transient=True
+            ) as progress:
+                task = progress.add_task("   Анализ через AI... (может занять несколько минут)", total=None)
+                
+                response = self.client.chat(
+                    model=self.model,
+                    messages=[
+                        {'role': 'system', 'content': system_prompt},
+                        {'role': 'user', 'content': user_prompt}
+                    ],
+                    format='json',  # Требуем JSON ответ
+                    options={
+                        'temperature': 0.7,
+                        'num_predict': 500,  # Уменьшено для ускорения
+                        'num_thread': self.num_threads if self.num_threads else 8,
+                        'num_ctx': self.num_ctx if self.num_ctx else 8192
+                    }
+                )
+                
+                progress.update(task, completed=True)
             
             print("   ✅ Анализ завершён")
             

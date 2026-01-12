@@ -26,18 +26,20 @@ class AIProcessor:
     """
     
     def __init__(
-        self, 
+        self,
         content_dir: Path = Path("downloads"),
-        tags_file: Path = Path("tags.json")
+        tags_file: Path = Path("known_tags.json"),
+        model: str = "qwen2.5:7b"
     ):
         """
         Args:
             content_dir: Директория с папками контента
             tags_file: Файл с базой тегов
+            model: Модель Ollama для анализа
         """
         self.content_dir = Path(content_dir)
-        self.brain = LocalBrain()
-        self.tag_manager = TagManager(tags_file=tags_file)
+        self.brain = LocalBrain(model=model)
+        self.tag_manager = TagManager(tags_file)  # Передаём путь напрямую
         
         # Поддерживаемые форматы изображений
         self.image_extensions = ['.jpg', '.jpeg', '.png', '.webp', '.gif']
@@ -161,31 +163,34 @@ class AIProcessor:
         try:
             print("   🤖 Запуск AI анализа...")
             
+            # Получаем строку с известными тегами
+            known_tags_str = self.tag_manager.get_tags_string()
+            
             # Создаем саммари
             summary = self.brain.analyze(
                 caption=description or "",
-                transcript=transcript or ""
+                transcript=transcript or "",
+                comments=[],  # Комментарии пока не используем
+                author="",     # Автор не всегда известен
+                known_tags=known_tags_str
             )
             
             if not summary:
                 print("❌ AI не вернул результат")
                 return None
             
-            # Извлекаем теги из саммари
-            print("   🏷️  Извлечение тегов...")
-            tags = self.tag_manager.extract_tags(summary)
+            # Извлекаем теги из результата AI (summary уже содержит теги)
+            print("   🏷️  Обработка тегов...")
+            tags = summary.get('tags', [])
             
-            # Добавляем теги в базу (если новые)
-            new_tags = []
-            for tag in tags:
-                if not self.tag_manager.tag_exists(tag):
-                    self.tag_manager.add_tag(tag)
-                    new_tags.append(tag)
-            
-            if new_tags:
-                print(f"   ✨ Новые теги: {', '.join(new_tags)}")
-            
-            print(f"   ✅ Теги: {', '.join(tags)}")
+            # Добавляем новые теги в базу
+            if tags:
+                new_count = self.tag_manager.add_tags(tags)
+                if new_count > 0:
+                    print(f"   ✨ Добавлено новых тегов: {new_count}")
+                print(f"   ✅ Теги: {', '.join(tags)}")
+            else:
+                print("   ⚠️  Теги не найдены")
             
             return {
                 'summary': summary,
@@ -400,8 +405,14 @@ def main():
     parser.add_argument(
         '--tags',
         type=Path,
-        default=Path('tags.json'),
-        help='Файл с базой тегов (по умолчанию: tags.json)'
+        default=Path('known_tags.json'),
+        help='Файл с базой тегов (по умолчанию: known_tags.json)'
+    )
+    parser.add_argument(
+        '--model',
+        type=str,
+        default='qwen2.5:7b',
+        help='Модель Ollama (по умолчанию: qwen2.5:7b)'
     )
     parser.add_argument(
         '--folder',
@@ -413,7 +424,8 @@ def main():
     
     processor = AIProcessor(
         content_dir=args.dir,
-        tags_file=args.tags
+        tags_file=args.tags,
+        model=args.model
     )
     
     if args.folder:

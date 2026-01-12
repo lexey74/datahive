@@ -48,6 +48,15 @@ htmlcov/
 
 # OS
 .DS_Store
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Bot tokens and secrets
+bot_config.json
+secrets.json
 Thumbs.db
 
 # SecBrain specific - sensitive data
