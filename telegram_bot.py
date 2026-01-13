@@ -388,104 +388,68 @@ async def check_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     
     # Проверяем, запущена ли транскрибация
     transcribe_running = False
+    transcribe_pid = None
     if config.transcribe_pid.exists():
         try:
             with open(config.transcribe_pid) as f:
-                pid = int(f.read().strip())
-            # Проверяем, жив ли процесс
-            os.kill(pid, 0)  # Signal 0 - проверка существования
-            transcribe_running = True
+                transcribe_pid = int(f.read().strip())
+            
+            # Проверяем статус процесса через psutil (более надёжно)
+            if PSUTIL_AVAILABLE:
+                try:
+                    proc = psutil.Process(transcribe_pid)
+                    status = proc.status()
+                    # Если процесс зомби или завершён - удаляем PID файл
+                    if status in [psutil.STATUS_ZOMBIE, psutil.STATUS_DEAD]:
+                        config.transcribe_pid.unlink(missing_ok=True)
+                        transcribe_running = False
+                    else:
+                        transcribe_running = True
+                except psutil.NoSuchProcess:
+                    config.transcribe_pid.unlink(missing_ok=True)
+                    transcribe_running = False
+            else:
+                # Fallback на os.kill если psutil недоступен
+                os.kill(transcribe_pid, 0)
+                transcribe_running = True
+                
         except (ProcessLookupError, ValueError, OSError):
             # Процесс не найден, удаляем pid файл
             config.transcribe_pid.unlink(missing_ok=True)
+            transcribe_running = False
     
     # Проверяем, запущена ли AI обработка
     ai_running = False
+    ai_pid = None
     if config.ai_pid.exists():
         try:
             with open(config.ai_pid) as f:
-                pid = int(f.read().strip())
-            os.kill(pid, 0)
-            ai_running = True
+                ai_pid = int(f.read().strip())
+            
+            # Проверяем статус процесса через psutil (более надёжно)
+            if PSUTIL_AVAILABLE:
+                try:
+                    proc = psutil.Process(ai_pid)
+                    status = proc.status()
+                    # Если процесс зомби или завершён - удаляем PID файл
+                    if status in [psutil.STATUS_ZOMBIE, psutil.STATUS_DEAD]:
+                        config.ai_pid.unlink(missing_ok=True)
+                        ai_running = False
+                    else:
+                        ai_running = True
+                except psutil.NoSuchProcess:
+                    config.ai_pid.unlink(missing_ok=True)
+                    ai_running = False
+            else:
+                # Fallback на os.kill если psutil недоступен
+                os.kill(ai_pid, 0)
+                ai_running = True
+                
         except (ProcessLookupError, ValueError, OSError):
             config.ai_pid.unlink(missing_ok=True)
+            ai_running = False
     
-    # Если транскрибация запущена
-    if transcribe_running:
-        # Получаем информацию о процессе
-        process_info = get_process_info(pid)
-        
-        log_content = ""
-        if config.transcribe_log.exists():
-            with open(config.transcribe_log) as f:
-                lines = f.readlines()
-                # Берём последние 15 строк
-                log_content = ''.join(lines[-15:])
-        
-        response = f"""
-🎤 **Модуль 2: Транскрибация**
-
-⚙️ Процесс запущен (PID: {pid})
-"""
-        
-        # Добавляем системную информацию если доступна
-        if process_info:
-            response += f"""
-📊 **Системная информация:**
-⏱ Время работы: {process_info['uptime']}
-💻 Загрузка CPU: {process_info['cpu_percent']:.1f}%
-🧠 Память: {process_info['memory_mb']:.1f} МБ
-"""
-        
-        response += f"""
-📋 **Последние логи:**
-```
-{log_content if log_content else 'Нет данных'}
-```
-
-Используйте /check снова для обновления статуса
-"""
-        await update.message.reply_text(response, parse_mode='Markdown')
-        return
-    
-    # Если AI обработка запущена
-    if ai_running:
-        # Получаем информацию о процессе
-        process_info = get_process_info(pid)
-        
-        log_content = ""
-        if config.ai_log.exists():
-            with open(config.ai_log) as f:
-                lines = f.readlines()
-                log_content = ''.join(lines[-15:])
-        
-        response = f"""
-🤖 **Модуль 3: AI Анализ**
-
-⚙️ Процесс запущен (PID: {pid})
-"""
-        
-        # Добавляем системную информацию если доступна
-        if process_info:
-            response += f"""
-📊 **Системная информация:**
-⏱ Время работы: {process_info['uptime']}
-💻 Загрузка CPU: {process_info['cpu_percent']:.1f}%
-🧠 Память: {process_info['memory_mb']:.1f} МБ
-"""
-        
-        response += f"""
-📋 **Последние логи:**
-```
-{log_content if log_content else 'Нет данных'}
-```
-
-Используйте /check снова для обновления статуса
-"""
-        await update.message.reply_text(response, parse_mode='Markdown')
-        return
-    
-    # Если ничего не запущено - показываем необработанные папки
+    # Сканируем папки и собираем статистику
     folders = sorted(
         [d for d in config.downloads_dir.iterdir() if d.is_dir()],
         key=lambda x: x.stat().st_mtime,
@@ -495,63 +459,100 @@ async def check_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     # Расширения только для ВИДЕО/АУДИО (фото не требуют транскрибации)
     video_audio_extensions = ['.mp4', '.mov', '.avi', '.mkv', '.webm', '.mp3', '.m4a', '.wav', '.flac', '.ogg']
     
-    # Анализируем папки
-    pending_transcribe = []
-    pending_ai = []
-    complete = []
+    # Статистика для транскрибации
+    total_folders = len(folders)
+    folders_without_media = 0
+    folders_with_media = 0
+    folders_transcribed = 0
+    folders_need_transcribe = 0
     
-    # Сканируем ВСЕ папки (без ограничений)
+    # Статистика для AI
+    folders_ready_for_ai = 0
+    folders_need_ai = 0
+    folders_complete = 0
+    
+    # Сканируем все папки
     for folder in folders:
-        video_audio_files = [f for f in folder.iterdir() if f.suffix.lower() in video_audio_extensions]
+        video_audio_files = [f for f in folder.iterdir() if f.is_file() and f.suffix.lower() in video_audio_extensions]
         has_transcript = (folder / "transcript.md").exists()
         has_description = (folder / "description.md").exists()
-        has_analysis = (folder / "Knowledge.md").exists()  # Модуль 3 создает Knowledge.md
+        has_analysis = (folder / "Knowledge.md").exists()
         
-        # Если уже есть Knowledge.md - полностью обработано
+        # Статистика транскрибации
+        if video_audio_files:
+            folders_with_media += 1
+            if has_transcript:
+                folders_transcribed += 1
+            else:
+                folders_need_transcribe += 1
+        else:
+            folders_without_media += 1
+        
+        # Статистика AI
         if has_analysis:
-            complete.append(folder.name[:40])
-            continue
-        
-        # Если есть видео/аудио, но нет транскрипции - ждём Модуль 2
-        if video_audio_files and not has_transcript:
-            pending_transcribe.append(folder.name[:40])
-            continue
-        
-        # Если есть видео/аудио + транскрипция, но нет анализа - ждём Модуль 3
-        if video_audio_files and has_transcript:
-            pending_ai.append(folder.name[:40])
-            continue
-        
-        # Если НЕТ видео/аудио, но есть description.md - можно анализировать (фото/текст)
-        if not video_audio_files and has_description:
-            pending_ai.append(folder.name[:40])
-            continue
+            folders_complete += 1
+        else:
+            # Готово к AI если: (видео+транскрипт) ИЛИ (текст без видео)
+            if video_audio_files and has_transcript:
+                folders_ready_for_ai += 1
+                folders_need_ai += 1
+            elif not video_audio_files and has_description:
+                folders_ready_for_ai += 1
+                folders_need_ai += 1
     
-    # Формируем отчёт
-    report = "� **Статус обработки**\n\n"
-    report += "⏸ Ни один процесс не запущен\n\n"
+    # ============================================================================
+    # БЛОК 1: ТРАНСКРИБАЦИЯ
+    # ============================================================================
+    report = "📊 **СТАТУС СИСТЕМЫ**\n\n"
+    report += "=" * 40 + "\n"
+    report += "🎤 **МОДУЛЬ 2: ТРАНСКРИБАЦИЯ**\n"
+    report += "=" * 40 + "\n\n"
     
-    if pending_transcribe:
-        report += f"🎤 **Ожидают транскрибации:** {len(pending_transcribe)}\n"
-        for name in pending_transcribe[:5]:
-            report += f"  • `{name}`\n"
-        if len(pending_transcribe) > 5:
-            report += f"  ... и ещё {len(pending_transcribe) - 5}\n"
-        report += "\n💡 Используйте /transcribe для запуска\n\n"
+    report += f"📂 Всего папок: **{total_folders}**\n"
+    report += f"   • Без видео/аудио: {folders_without_media}\n"
+    report += f"   • С видео/аудио: {folders_with_media}\n"
+    report += f"   • Уже транскрибировано: {folders_transcribed}\n"
+    report += f"   • **Требуют транскрибации: {folders_need_transcribe}**\n\n"
     
-    if pending_ai:
-        report += f"🤖 **Ожидают AI анализа:** {len(pending_ai)}\n"
-        for name in pending_ai[:5]:
-            report += f"  • `{name}`\n"
-        if len(pending_ai) > 5:
-            report += f"  ... и ещё {len(pending_ai) - 5}\n"
-        report += "\n💡 Используйте /ai для запуска\n\n"
+    # Статус процесса транскрибации
+    if transcribe_running and transcribe_pid:
+        process_info = get_process_info(transcribe_pid)
+        report += "⚙️ **Статус процесса:** ЗАПУЩЕН\n"
+        report += f"   • PID: {transcribe_pid}\n"
+        if process_info:
+            report += f"   • Время работы: {process_info['uptime']}\n"
+            report += f"   • CPU: {process_info['cpu_percent']:.1f}%\n"
+            report += f"   • Память: {process_info['memory_mb']:.1f} МБ\n"
+    else:
+        report += "⏸ **Статус процесса:** НЕ ЗАПУЩЕН\n"
+        if folders_need_transcribe > 0:
+            report += f"\n💡 Используйте /transcribe для обработки {folders_need_transcribe} папок\n"
     
-    if complete:
-        report += f"✅ **Полностью обработано:** {len(complete)}\n"
+    # ============================================================================
+    # БЛОК 2: AI АНАЛИЗ
+    # ============================================================================
+    report += "\n" + "=" * 40 + "\n"
+    report += "🤖 **МОДУЛЬ 3: AI АНАЛИЗ**\n"
+    report += "=" * 40 + "\n\n"
     
-    if not pending_transcribe and not pending_ai and not complete:
-        report += "� Нет папок для обработки"
+    report += f"📂 Всего папок: **{total_folders}**\n"
+    report += f"   • Готовы к анализу: {folders_ready_for_ai}\n"
+    report += f"   • **Требуют AI анализа: {folders_need_ai}**\n"
+    report += f"   • Полностью обработано: {folders_complete}\n\n"
+    
+    # Статус процесса AI
+    if ai_running and ai_pid:
+        process_info = get_process_info(ai_pid)
+        report += "⚙️ **Статус процесса:** ЗАПУЩЕН\n"
+        report += f"   • PID: {ai_pid}\n"
+        if process_info:
+            report += f"   • Время работы: {process_info['uptime']}\n"
+            report += f"   • CPU: {process_info['cpu_percent']:.1f}%\n"
+            report += f"   • Память: {process_info['memory_mb']:.1f} МБ\n"
+    else:
+        report += "⏸ **Статус процесса:** НЕ ЗАПУЩЕН\n"
+        if folders_need_ai > 0:
+            report += f"\n💡 Используйте /ai для обработки {folders_need_ai} папок\n"
     
     await update.message.reply_text(report, parse_mode='Markdown')
 
