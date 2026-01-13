@@ -289,6 +289,12 @@ processed: true
         """
         Проверяет, нужна ли AI обработка для папки
         
+        Логика согласно ТЗ:
+        - SKIP если Knowledge.md уже существует
+        - SKIP если есть видео/аудио, но нет транскрипции (ждём Модуль 2)
+        - PROCESS если есть видео/аудио + транскрипция
+        - PROCESS если есть только фото/текст (без аудио) + description.md
+        
         Args:
             folder: Папка для проверки
             
@@ -299,30 +305,31 @@ processed: true
         if self.has_analysis(folder):
             return False, "Knowledge.md существует"
         
-        # 2. Проверяем наличие медиа файлов
-        media_extensions = ['.mp4', '.mov', '.avi', '.mkv', '.webm', '.mp3', '.m4a', '.wav', '.flac', '.ogg']
-        media_files = [
+        # 2. Проверяем наличие ВИДЕО/АУДИО файлов (НЕ фото!)
+        # Фото не требуют транскрибации и обрабатываются сразу
+        video_audio_extensions = ['.mp4', '.mov', '.avi', '.mkv', '.webm', '.mp3', '.m4a', '.wav', '.flac', '.ogg']
+        video_audio_files = [
             f for f in folder.iterdir() 
-            if f.is_file() and f.suffix.lower() in media_extensions
+            if f.is_file() and f.suffix.lower() in video_audio_extensions
         ]
         
         has_transcript = (folder / "transcript.md").exists()
         has_description = (folder / "description.md").exists()
         
-        # 3. Если есть медиа файлы
-        if media_files:
+        # 3. Если есть ВИДЕО/АУДИО файлы
+        if video_audio_files:
             # Нужна транскрибация сначала
             if not has_transcript:
-                return False, "есть медиа, но нет transcript.md (требуется транскрибация)"
+                return False, "есть видео/аудио, но нет transcript.md (требуется Модуль 2)"
             # Есть транскрипция - можно обрабатывать
-            return True, "есть медиа + transcript.md"
+            return True, "есть видео/аудио + transcript.md"
         
-        # 4. Если нет медиа файлов
+        # 4. Если НЕТ видео/аудио (только фото или текст)
         if has_description:
-            # Только текстовая заметка - можно обрабатывать
-            return True, "текстовая заметка без медиа"
+            # Текстовая заметка или фото с описанием - можно обрабатывать сразу
+            return True, "есть description.md (фото/текст без аудио)"
         
-        # 5. Вообще нет контента
+        # 5. Вообще нет контента для анализа
         return False, "нет контента для обработки"
     
     def process_folder(self, folder: Path) -> dict:

@@ -492,24 +492,40 @@ async def check_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         reverse=True
     )
     
-    media_extensions = ['.mp4', '.mov', '.avi', '.mkv', '.webm', '.mp3', '.m4a', '.wav', '.flac', '.ogg']
+    # Расширения только для ВИДЕО/АУДИО (фото не требуют транскрибации)
+    video_audio_extensions = ['.mp4', '.mov', '.avi', '.mkv', '.webm', '.mp3', '.m4a', '.wav', '.flac', '.ogg']
     
     # Анализируем папки
     pending_transcribe = []
     pending_ai = []
     complete = []
     
-    for folder in folders[:20]:  # Последние 20 папок
-        media_files = [f for f in folder.iterdir() if f.suffix.lower() in media_extensions]
+    # Сканируем ВСЕ папки (без ограничений)
+    for folder in folders:
+        video_audio_files = [f for f in folder.iterdir() if f.suffix.lower() in video_audio_extensions]
         has_transcript = (folder / "transcript.md").exists()
+        has_description = (folder / "description.md").exists()
         has_analysis = (folder / "Knowledge.md").exists()  # Модуль 3 создает Knowledge.md
         
-        if media_files and not has_transcript:
-            pending_transcribe.append(folder.name[:40])
-        elif has_transcript and not has_analysis:
-            pending_ai.append(folder.name[:40])
-        elif has_transcript and has_analysis:
+        # Если уже есть Knowledge.md - полностью обработано
+        if has_analysis:
             complete.append(folder.name[:40])
+            continue
+        
+        # Если есть видео/аудио, но нет транскрипции - ждём Модуль 2
+        if video_audio_files and not has_transcript:
+            pending_transcribe.append(folder.name[:40])
+            continue
+        
+        # Если есть видео/аудио + транскрипция, но нет анализа - ждём Модуль 3
+        if video_audio_files and has_transcript:
+            pending_ai.append(folder.name[:40])
+            continue
+        
+        # Если НЕТ видео/аудио, но есть description.md - можно анализировать (фото/текст)
+        if not video_audio_files and has_description:
+            pending_ai.append(folder.name[:40])
+            continue
     
     # Формируем отчёт
     report = "� **Статус обработки**\n\n"
