@@ -4,8 +4,8 @@ SecBrain Process Script
 Обрабатывает все необработанные папки в SecondBrain_Inbox:
 - Запускает AI анализ через LocalBrain
 - Создаёт теги через TagManager
-- Формирует финальный Note.md
-Пропускает папки, где Note.md уже существует.
+- Формирует финальный Knowledge.md
+Пропускает папки, где Knowledge.md уже существует.
 """
 
 import sys
@@ -100,7 +100,7 @@ class ContentData:
 
 def find_unprocessed_folders(inbox_dir: Path) -> List[Path]:
     """
-    Находит все папки без Note.md
+    Находит все папки без Knowledge.md
     
     Args:
         inbox_dir: Путь к SecondBrain_Inbox
@@ -116,7 +116,7 @@ def find_unprocessed_folders(inbox_dir: Path) -> List[Path]:
     
     for folder in inbox_dir.iterdir():
         if folder.is_dir():
-            note_file = folder / "Note.md"
+            note_file = folder / "Knowledge.md"
             if not note_file.exists():
                 # Проверяем, что есть хотя бы один из файлов данных
                 has_data = (
@@ -160,7 +160,7 @@ def extract_metadata_from_folder(folder: Path) -> dict:
 
 def create_note(folder: Path, ai_summary: str, tags: List[str], metadata: dict, content_data: ContentData):
     """
-    Создаёт финальный Note.md
+    Создаёт финальный Knowledge.md
     
     Args:
         folder: Путь к папке
@@ -169,7 +169,7 @@ def create_note(folder: Path, ai_summary: str, tags: List[str], metadata: dict, 
         metadata: Метаданные
         content_data: Объект с сырыми данными
     """
-    note_path = folder / "Note.md"
+    note_path = folder / "Knowledge.md"
     
     # Формируем frontmatter
     note_content = "---\n"
@@ -230,7 +230,7 @@ def create_note(folder: Path, ai_summary: str, tags: List[str], metadata: dict, 
     
     # Сохраняем
     note_path.write_text(note_content, encoding='utf-8')
-    console.print(f"   ✅ Note.md создан")
+    console.print(f"   ✅ Knowledge.md создан")
 
 
 def process_folder(folder: Path, config: Config, brain: LocalBrain, tag_manager: TagManager):
@@ -319,8 +319,8 @@ def process_folder(folder: Path, config: Config, brain: LocalBrain, tag_manager:
         # 5. Извлечение метаданных
         metadata = extract_metadata_from_folder(folder)
         
-        # 6. Создание Note.md
-        console.print("   📝 Создание Note.md...")
+        # 6. Создание Knowledge.md
+        console.print("   📝 Создание Knowledge.md...")
         create_note(folder, ai_summary, tags, metadata, content_data)
         
         console.print(f"   ✅ Папка обработана успешно\n")

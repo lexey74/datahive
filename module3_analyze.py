@@ -73,9 +73,9 @@ class AIProcessor:
             folder: Папка для проверки
             
         Returns:
-            True если Note.md существует
+            True если Knowledge.md существует
         """
-        note_file = folder / "Note.md"
+        note_file = folder / "Knowledge.md"
         return note_file.exists()
     
     def read_description(self, folder: Path) -> Optional[str]:
@@ -213,7 +213,7 @@ class AIProcessor:
         analysis: Dict
     ) -> Optional[Path]:
         """
-        Создает Note.md в формате Obsidian
+        Создает Knowledge.md в формате Obsidian
         
         Args:
             folder: Папка для сохранения
@@ -222,7 +222,7 @@ class AIProcessor:
         Returns:
             Путь к созданному файлу или None
         """
-        note_file = folder / "Note.md"
+        note_file = folder / "Knowledge.md"
         
         # Извлекаем название из имени папки
         folder_name = folder.name
@@ -279,7 +279,7 @@ processed: true
         
         try:
             note_file.write_text(markdown, encoding='utf-8')
-            print(f"✅ Сохранено: Note.md")
+            print(f"✅ Сохранено: Knowledge.md")
             return note_file
         except Exception as e:
             print(f"❌ Ошибка сохранения: {e}")
@@ -295,9 +295,9 @@ processed: true
         Returns:
             (нужна_обработка, причина)
         """
-        # 1. Если есть Note.md - уже обработана
+        # 1. Если есть Knowledge.md - уже обработана
         if self.has_analysis(folder):
-            return False, "Note.md существует"
+            return False, "Knowledge.md существует"
         
         # 2. Проверяем наличие медиа файлов
         media_extensions = ['.mp4', '.mov', '.avi', '.mkv', '.webm', '.mp3', '.m4a', '.wav', '.flac', '.ogg']
@@ -349,7 +349,7 @@ processed: true
         
         if not should_process:
             print(f"⏭️  Пропуск: {folder.name} ({reason})")
-            if "Note.md существует" in reason:
+            if "Knowledge.md существует" in reason:
                 stats['already_processed'] = True
             else:
                 stats['skip_reason'] = reason
@@ -364,14 +364,14 @@ processed: true
             stats['error'] = "Нет данных или ошибка анализа"
             return stats
         
-        # Создаем Note.md
+        # Создаем Knowledge.md
         note_file = self.create_obsidian_note(folder, analysis)
         
         if note_file:
             stats['success'] = True
             stats['new_tags'] = len(analysis.get('new_tags', []))
         else:
-            stats['error'] = "Ошибка создания Note.md"
+            stats['error'] = "Ошибка создания Knowledge.md"
         
         return stats
     
@@ -435,7 +435,7 @@ processed: true
         print("📊 ИТОГОВАЯ СТАТИСТИКА")
         print("="*70)
         print(f"Всего папок: {total_stats['total_folders']}")
-        print(f"Уже обработано (Note.md): {total_stats['already_processed']}")
+        print(f"Уже обработано (Knowledge.md): {total_stats['already_processed']}")
         print(f"Успешно обработано: {total_stats['successfully_processed']}")
         print(f"Новых тегов создано: {total_stats['total_new_tags']}")
         

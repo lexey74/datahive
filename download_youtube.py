@@ -145,7 +145,7 @@ def main():
             print(f"   {summary[:300]}...")
             
             # Сохраняем результат
-            note_file = output_dir / content.video_id / "Note.md"
+            note_file = output_dir / content.video_id / "Knowledge.md"
             
             note_content = f"""---
 title: {result.get('title', content.title)}
@@ -198,7 +198,7 @@ views: {content.views}
 """
             
             note_file.write_text(note_content, encoding='utf-8')
-            print(f"\n   💾 Note.md сохранён: {note_file}")
+            print(f"\n   💾 Knowledge.md сохранён: {note_file}")
             
         else:
             print("\n⚠️  AI анализ не вернул результат")

@@ -2,7 +2,7 @@
 """
 SecBrain Download Script
 Скачивает контент из Instagram и подготавливает сырые данные для последующей AI обработки.
-НЕ создаёт Note.md - только сохраняет медиа, caption.md, transcript.md, comments.md.
+НЕ создаёт Knowledge.md - только сохраняет медиа, caption.md, transcript.md, comments.md.
 """
 
 import sys

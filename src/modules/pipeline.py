@@ -123,7 +123,7 @@ class SecBrainPipeline:
         full_text: str
     ) -> Path:
         """
-        Создание Asset Bundle (папка + Note.md + медиа)
+        Создание Asset Bundle (папка + Knowledge.md + медиа)
         
         Args:
             content: InstagramContent
@@ -132,7 +132,7 @@ class SecBrainPipeline:
             full_text: Чистый текст транскрипта
             
         Returns:
-            Путь к Note.md
+            Путь к Knowledge.md
         """
         # Формирование имени папки
         date_str = content.date or datetime.now().strftime("%Y-%m-%d")
@@ -150,7 +150,7 @@ class SecBrainPipeline:
             media_dest = bundle_path / f"media{media_ext}"
             content.media_path.rename(media_dest)
         
-        # Генерация Note.md
+        # Генерация Knowledge.md
         note_content = self._generate_markdown(
             content=content,
             ai_result=ai_result,
@@ -159,7 +159,7 @@ class SecBrainPipeline:
             media_filename=f"media{media_ext}"
         )
         
-        note_path = bundle_path / "Note.md"
+        note_path = bundle_path / "Knowledge.md"
         note_path.write_text(note_content, encoding='utf-8')
         
         return note_path

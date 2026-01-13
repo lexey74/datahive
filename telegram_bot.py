@@ -245,7 +245,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 1. Создаётся папка в downloads/
 2. Сохраняется контент
 3. /transcribe → transcript.md (Whisper)
-4. /ai → Note.md + теги (Ollama)
+4. /ai → Knowledge.md + теги (Ollama)
 
 ⏱ Обработка выполняется в фоне, используйте /check для мониторинга.
 """
@@ -502,7 +502,7 @@ async def check_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     for folder in folders[:20]:  # Последние 20 папок
         media_files = [f for f in folder.iterdir() if f.suffix.lower() in media_extensions]
         has_transcript = (folder / "transcript.md").exists()
-        has_analysis = (folder / "Note.md").exists()  # Модуль 3 создает Note.md
+        has_analysis = (folder / "Knowledge.md").exists()  # Модуль 3 создает Knowledge.md
         
         if media_files and not has_transcript:
             pending_transcribe.append(folder.name[:40])
