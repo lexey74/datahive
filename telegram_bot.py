@@ -111,6 +111,110 @@ class BotConfig:
 
 
 # ============================================================================
+# Глобальная очередь процессов
+# ============================================================================
+
+class ProcessQueue:
+    """Глобальная очередь для управления процессами транскрибации и AI анализа"""
+    
+    def __init__(self):
+        self.transcribe_queue: list = []  # [(user_id, username, timestamp)]
+        self.ai_queue: list = []  # [(user_id, username, timestamp)]
+        self.transcribe_running: Optional[tuple] = None  # (user_id, username, pid)
+        self.ai_running: Optional[tuple] = None  # (user_id, username, pid)
+    
+    def add_to_transcribe_queue(self, user_id: int, username: str) -> int:
+        """Добавляет пользователя в очередь транскрибации. Возвращает позицию в очереди."""
+        # Проверяем, не в очереди ли уже
+        for item in self.transcribe_queue:
+            if item[0] == user_id:
+                return self.transcribe_queue.index(item) + 1
+        
+        self.transcribe_queue.append((user_id, username, datetime.now()))
+        return len(self.transcribe_queue)
+    
+    def add_to_ai_queue(self, user_id: int, username: str) -> int:
+        """Добавляет пользователя в очередь AI анализа. Возвращает позицию в очереди."""
+        # Проверяем, не в очереди ли уже
+        for item in self.ai_queue:
+            if item[0] == user_id:
+                return self.ai_queue.index(item) + 1
+        
+        self.ai_queue.append((user_id, username, datetime.now()))
+        return len(self.ai_queue)
+    
+    def start_transcribe(self, user_id: int, username: str, pid: int):
+        """Помечает процесс транскрибации как запущенный"""
+        self.transcribe_running = (user_id, username, pid)
+        # Удаляем из очереди
+        self.transcribe_queue = [item for item in self.transcribe_queue if item[0] != user_id]
+    
+    def start_ai(self, user_id: int, username: str, pid: int):
+        """Помечает процесс AI анализа как запущенный"""
+        self.ai_running = (user_id, username, pid)
+        # Удаляем из очереди
+        self.ai_queue = [item for item in self.ai_queue if item[0] != user_id]
+    
+    def finish_transcribe(self):
+        """Завершает процесс транскрибации"""
+        self.transcribe_running = None
+    
+    def finish_ai(self):
+        """Завершает процесс AI анализа"""
+        self.ai_running = None
+    
+    def get_transcribe_status(self, user_id: int) -> dict:
+        """Получает статус пользователя в очереди транскрибации"""
+        # Проверяем, запущен ли процесс этим пользователем
+        if self.transcribe_running and self.transcribe_running[0] == user_id:
+            return {
+                'status': 'running',
+                'position': 0,
+                'pid': self.transcribe_running[2]
+            }
+        
+        # Проверяем позицию в очереди
+        for i, item in enumerate(self.transcribe_queue):
+            if item[0] == user_id:
+                return {
+                    'status': 'queued',
+                    'position': i + 1,
+                    'total': len(self.transcribe_queue)
+                }
+        
+        return {'status': 'not_in_queue'}
+    
+    def get_ai_status(self, user_id: int) -> dict:
+        """Получает статус пользователя в очереди AI анализа"""
+        # Проверяем, запущен ли процесс этим пользователем
+        if self.ai_running and self.ai_running[0] == user_id:
+            return {
+                'status': 'running',
+                'position': 0,
+                'pid': self.ai_running[2]
+            }
+        
+        # Проверяем позицию в очереди
+        for i, item in enumerate(self.ai_queue):
+            if item[0] == user_id:
+                return {
+                    'status': 'queued',
+                    'position': i + 1,
+                    'total': len(self.ai_queue)
+                }
+        
+        return {'status': 'not_in_queue'}
+    
+    def can_start_transcribe(self) -> bool:
+        """Проверяет, можно ли запустить транскрибацию"""
+        return self.transcribe_running is None and len(self.transcribe_queue) > 0
+    
+    def can_start_ai(self) -> bool:
+        """Проверяет, можно ли запустить AI анализ"""
+        return self.ai_running is None and len(self.ai_queue) > 0
+
+
+# ============================================================================
 # Состояния для ConversationHandler
 # ============================================================================
 
@@ -121,6 +225,104 @@ WAITING_TITLE = 2
 # ============================================================================
 # Утилиты
 # ============================================================================
+
+async def start_transcribe_process(update: Update, context: ContextTypes.DEFAULT_TYPE, 
+                                   config: BotConfig, queue: ProcessQueue, user_folder: Path):
+    """Запускает процесс транскрибации для пользователя"""
+    user = update.effective_user
+    username = user.username or f"user_{user.id}"
+    
+    status_msg = await update.message.reply_text(
+        "🎤 **Модуль 2: Транскрибация**\n\n"
+        "Запускаю транскрибацию в фоновом режиме...",
+        parse_mode='Markdown'
+    )
+    
+    try:
+        import subprocess
+        
+        # Очищаем лог-файл пользователя
+        user_log = config.transcribe_log.parent / f"transcribe_{user.id}.log"
+        user_log.write_text("")
+        
+        # Запускаем процесс только для папки пользователя
+        process = subprocess.Popen(
+            [sys.executable, "module2_transcribe.py", "--folder", str(user_folder)],
+            cwd=Path(__file__).parent,
+            stdout=open(user_log, 'w'),
+            stderr=subprocess.STDOUT,
+            start_new_session=True
+        )
+        
+        # Сохраняем PID
+        config.transcribe_pid.write_text(str(process.pid))
+        
+        # Обновляем очередь
+        queue.start_transcribe(user.id, username, process.pid)
+        
+        await status_msg.edit_text(
+            f"✅ Транскрибация запущена!\n\n"
+            f"🆔 PID: {process.pid}\n"
+            f"📂 Папка: `{user_folder.name}`\n\n"
+            f"Используйте /check для отслеживания прогресса\n"
+            f"Логи: `{user_log.name}`",
+            parse_mode='Markdown'
+        )
+        
+    except Exception as e:
+        logger.error(f"Error starting transcribe process: {e}", exc_info=True)
+        await status_msg.edit_text(f"❌ Ошибка запуска: {str(e)[:200]}")
+        queue.finish_transcribe()
+
+
+async def start_ai_process(update: Update, context: ContextTypes.DEFAULT_TYPE,
+                           config: BotConfig, queue: ProcessQueue, user_folder: Path):
+    """Запускает процесс AI анализа для пользователя"""
+    user = update.effective_user
+    username = user.username or f"user_{user.id}"
+    
+    status_msg = await update.message.reply_text(
+        "🤖 **Модуль 3: AI Анализ**\n\n"
+        "Запускаю анализ в фоновом режиме...",
+        parse_mode='Markdown'
+    )
+    
+    try:
+        import subprocess
+        
+        # Очищаем лог-файл пользователя
+        user_log = config.ai_log.parent / f"ai_{user.id}.log"
+        user_log.write_text("")
+        
+        # Запускаем процесс только для папки пользователя
+        process = subprocess.Popen(
+            [sys.executable, "module3_analyze.py", "--folder", str(user_folder)],
+            cwd=Path(__file__).parent,
+            stdout=open(user_log, 'w'),
+            stderr=subprocess.STDOUT,
+            start_new_session=True
+        )
+        
+        # Сохраняем PID
+        config.ai_pid.write_text(str(process.pid))
+        
+        # Обновляем очередь
+        queue.start_ai(user.id, username, process.pid)
+        
+        await status_msg.edit_text(
+            f"✅ AI анализ запущен!\n\n"
+            f"🆔 PID: {process.pid}\n"
+            f"📂 Папка: `{user_folder.name}`\n\n"
+            f"Используйте /check для отслеживания прогресса\n"
+            f"Логи: `{user_log.name}`",
+            parse_mode='Markdown'
+        )
+        
+    except Exception as e:
+        logger.error(f"Error starting AI process: {e}", exc_info=True)
+        await status_msg.edit_text(f"❌ Ошибка запуска: {str(e)[:200]}")
+        queue.finish_ai()
+
 
 def get_user_folder(user: User, base_dir: Path) -> Path:
     """
@@ -324,61 +526,50 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 async def transcribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Обработчик команды /transcribe - запуск Модуля 2 (транскрибация всех папок)"""
     config: BotConfig = context.bot_data.get('config', BotConfig())
+    queue: ProcessQueue = context.bot_data.get('process_queue', ProcessQueue())
+    user = update.effective_user
     
-    if not config.downloads_dir.exists():
-        await update.message.reply_text("📁 Папка downloads пуста")
+    # Получаем пользовательскую папку
+    user_folder = get_user_folder(user, config.downloads_dir)
+    
+    if not user_folder.exists() or not list(user_folder.iterdir()):
+        await update.message.reply_text("📁 Ваша папка пуста")
         return
     
-    # Проверяем, не запущен ли уже процесс
-    if config.transcribe_pid.exists():
-        try:
-            with open(config.transcribe_pid) as f:
-                pid = int(f.read().strip())
-            os.kill(pid, 0)
-            await update.message.reply_text(
-                f"⚠️ Транскрибация уже запущена (PID: {pid})\n\n"
-                f"Используйте /check для просмотра статуса"
-            )
-            return
-        except (ProcessLookupError, ValueError, OSError):
-            config.transcribe_pid.unlink(missing_ok=True)
+    # Проверяем статус в очереди
+    status = queue.get_transcribe_status(user.id)
     
-    status_msg = await update.message.reply_text(
-        "🎤 **Модуль 2: Транскрибация**\n\n"
-        "Запускаю транскрибацию в фоновом режиме...",
-        parse_mode='Markdown'
-    )
-    
-    try:
-        # Запускаем module2 в отдельном процессе
-        import subprocess
-        
-        # Очищаем лог-файл
-        config.transcribe_log.write_text("")
-        
-        # Запускаем процесс
-        process = subprocess.Popen(
-            [sys.executable, "module2_transcribe.py"],
-            cwd=Path(__file__).parent,
-            stdout=open(config.transcribe_log, 'w'),
-            stderr=subprocess.STDOUT,
-            start_new_session=True  # Отвязываем от родительского процесса
+    if status['status'] == 'running':
+        await update.message.reply_text(
+            f"⚙️ Транскрибация уже запущена для вас (PID: {status['pid']})\n\n"
+            f"Используйте /check для просмотра статуса"
         )
-        
-        # Сохраняем PID
-        config.transcribe_pid.write_text(str(process.pid))
-        
-        await status_msg.edit_text(
-            f"✅ **Транскрибация запущена!**\n\n"
-            f"📝 PID: {process.pid}\n"
-            f"📋 Логи: `{config.transcribe_log}`\n\n"
-            f"Используйте /check для просмотра прогресса",
+        return
+    
+    if status['status'] == 'queued':
+        await update.message.reply_text(
+            f"⏳ Вы уже в очереди транскрибации!\n\n"
+            f"📊 Позиция: {status['position']} из {status['total']}\n\n"
+            f"Дождитесь своей очереди или используйте /check для статуса"
+        )
+        return
+    
+    # Добавляем в очередь
+    username = user.username or f"user_{user.id}"
+    position = queue.add_to_transcribe_queue(user.id, username)
+    
+    if position == 1 and queue.transcribe_running is None:
+        # Можем запускать сразу
+        await start_transcribe_process(update, context, config, queue, user_folder)
+    else:
+        # Ждем в очереди
+        await update.message.reply_text(
+            f"⏳ Добавлено в очередь транскрибации\n\n"
+            f"📊 Ваша позиция: {position}\n\n"
+            f"Процесс запустится автоматически, когда подойдет очередь.\n"
+            f"Используйте /check для отслеживания статуса.",
             parse_mode='Markdown'
         )
-        
-    except Exception as e:
-        logger.error(f"Transcription start error: {e}", exc_info=True)
-        await status_msg.edit_text(f"❌ Ошибка запуска: {str(e)[:200]}")
 
 
 def get_process_info(pid: int) -> Optional[Dict[str, Any]]:
@@ -472,6 +663,7 @@ def get_ollama_info() -> Optional[Dict[str, Any]]:
 async def check_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Обработчик команды /check - проверка текущего состояния обработки"""
     config: BotConfig = context.bot_data.get('config', BotConfig())
+    queue: ProcessQueue = context.bot_data.get('process_queue', ProcessQueue())
     user = update.effective_user
     
     # Получаем пользовательскую папку
@@ -484,68 +676,9 @@ async def check_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         )
         return
     
-    # Проверяем, запущена ли транскрибация
-    transcribe_running = False
-    transcribe_pid = None
-    if config.transcribe_pid.exists():
-        try:
-            with open(config.transcribe_pid) as f:
-                transcribe_pid = int(f.read().strip())
-            
-            # Проверяем статус процесса через psutil (более надёжно)
-            if PSUTIL_AVAILABLE:
-                try:
-                    proc = psutil.Process(transcribe_pid)
-                    status = proc.status()
-                    # Если процесс зомби или завершён - удаляем PID файл
-                    if status in [psutil.STATUS_ZOMBIE, psutil.STATUS_DEAD]:
-                        config.transcribe_pid.unlink(missing_ok=True)
-                        transcribe_running = False
-                    else:
-                        transcribe_running = True
-                except psutil.NoSuchProcess:
-                    config.transcribe_pid.unlink(missing_ok=True)
-                    transcribe_running = False
-            else:
-                # Fallback на os.kill если psutil недоступен
-                os.kill(transcribe_pid, 0)
-                transcribe_running = True
-                
-        except (ProcessLookupError, ValueError, OSError):
-            # Процесс не найден, удаляем pid файл
-            config.transcribe_pid.unlink(missing_ok=True)
-            transcribe_running = False
-    
-    # Проверяем, запущена ли AI обработка
-    ai_running = False
-    ai_pid = None
-    if config.ai_pid.exists():
-        try:
-            with open(config.ai_pid) as f:
-                ai_pid = int(f.read().strip())
-            
-            # Проверяем статус процесса через psutil (более надёжно)
-            if PSUTIL_AVAILABLE:
-                try:
-                    proc = psutil.Process(ai_pid)
-                    status = proc.status()
-                    # Если процесс зомби или завершён - удаляем PID файл
-                    if status in [psutil.STATUS_ZOMBIE, psutil.STATUS_DEAD]:
-                        config.ai_pid.unlink(missing_ok=True)
-                        ai_running = False
-                    else:
-                        ai_running = True
-                except psutil.NoSuchProcess:
-                    config.ai_pid.unlink(missing_ok=True)
-                    ai_running = False
-            else:
-                # Fallback на os.kill если psutil недоступен
-                os.kill(ai_pid, 0)
-                ai_running = True
-                
-        except (ProcessLookupError, ValueError, OSError):
-            config.ai_pid.unlink(missing_ok=True)
-            ai_running = False
+    # Получаем статус пользователя в очередях
+    transcribe_status = queue.get_transcribe_status(user.id)
+    ai_status = queue.get_ai_status(user.id)
     
     # Сканируем папки ТОЛЬКО текущего пользователя
     folders = sorted(
@@ -612,19 +745,24 @@ async def check_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     report += f"   • Уже транскрибировано: {folders_transcribed}\n"
     report += f"   • **Требуют транскрибации: {folders_need_transcribe}**\n\n"
     
-    # Статус процесса транскрибации
-    if transcribe_running and transcribe_pid:
-        process_info = get_process_info(transcribe_pid)
-        report += "⚙️ **Статус процесса:** ЗАПУЩЕН\n"
-        report += f"   • PID: {transcribe_pid}\n"
-        if process_info:
-            report += f"   • Время работы: {process_info['uptime']}\n"
-            report += f"   • CPU: {process_info['cpu_percent']:.1f}%\n"
-            report += f"   • Память: {process_info['memory_mb']:.1f} МБ\n"
+    # Статус пользователя в очереди транскрибации
+    if transcribe_status['status'] == 'running':
+        report += "⚙️ **Ваш статус:** ВЫПОЛНЯЕТСЯ\n"
+        report += f"   • PID: {transcribe_status['pid']}\n"
+    elif transcribe_status['status'] == 'queued':
+        report += f"⏳ **Ваш статус:** В ОЧЕРЕДИ\n"
+        report += f"   • Позиция: {transcribe_status['position']} из {transcribe_status['total']}\n"
     else:
-        report += "⏸ **Статус процесса:** НЕ ЗАПУЩЕН\n"
+        report += "⏸ **Ваш статус:** НЕ ЗАПУЩЕНО\n"
         if folders_need_transcribe > 0:
             report += f"\n💡 Используйте /transcribe для обработки {folders_need_transcribe} папок\n"
+    
+    # Глобальный статус транскрибации
+    if queue.transcribe_running:
+        running_user = queue.transcribe_running[1]
+        report += f"\n📌 Сейчас обрабатывается: @{running_user}\n"
+    if len(queue.transcribe_queue) > 0:
+        report += f"📋 В очереди: {len(queue.transcribe_queue)} пользователей\n"
     
     # ============================================================================
     # БЛОК 2: AI АНАЛИЗ
@@ -638,17 +776,27 @@ async def check_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     report += f"   • **Требуют AI анализа: {folders_need_ai}**\n"
     report += f"   • Полностью обработано: {folders_complete}\n\n"
     
-    # Статус процесса AI
-    if ai_running and ai_pid:
-        process_info = get_process_info(ai_pid)
-        report += "⚙️ **Статус процесса Python:** ЗАПУЩЕН\n"
-        report += f"   • PID: {ai_pid}\n"
-        if process_info:
-            report += f"   • Время работы: {process_info['uptime']}\n"
-            report += f"   • CPU: {process_info['cpu_percent']:.1f}%\n"
-            report += f"   • Память: {process_info['memory_mb']:.1f} МБ\n"
-        
-        # Добавляем информацию об Ollama
+    # Статус пользователя в очереди AI
+    if ai_status['status'] == 'running':
+        report += "⚙️ **Ваш статус:** ВЫПОЛНЯЕТСЯ\n"
+        report += f"   • PID: {ai_status['pid']}\n"
+    elif ai_status['status'] == 'queued':
+        report += f"⏳ **Ваш статус:** В ОЧЕРЕДИ\n"
+        report += f"   • Позиция: {ai_status['position']} из {ai_status['total']}\n"
+    else:
+        report += "⏸ **Ваш статус:** НЕ ЗАПУЩЕНО\n"
+        if folders_need_ai > 0:
+            report += f"\n💡 Используйте /ai для обработки {folders_need_ai} папок\n"
+    
+    # Глобальный статус AI
+    if queue.ai_running:
+        running_user = queue.ai_running[1]
+        report += f"\n📌 Сейчас обрабатывается: @{running_user}\n"
+    if len(queue.ai_queue) > 0:
+        report += f"📋 В очереди: {len(queue.ai_queue)} пользователей\n"
+    
+    # Добавляем информацию об Ollama если AI процесс запущен
+    if queue.ai_running:
         ollama_info = get_ollama_info()
         if ollama_info:
             report += f"\n🧠 **Ollama LLM ({ollama_info['model']}):** АКТИВЕН\n"
@@ -1463,8 +1611,9 @@ def main():
     # Создаём приложение
     application = Application.builder().token(config.token).build()
     
-    # Сохраняем конфигурацию
+    # Сохраняем конфигурацию и инициализируем очередь
     application.bot_data['config'] = config
+    application.bot_data['process_queue'] = ProcessQueue()
     
     # ConversationHandler для медиа с описанием
     media_conv_handler = ConversationHandler(
