@@ -286,7 +286,7 @@ processed: true
             for i, img in enumerate(images, 1):
                 markdown += f"![[{img.name}]]\n"
         
-        markdown += "\n---\n\n*Создано автоматически модулем AI анализа SecBrain*\n"
+        markdown += "\n---\n\n*Создано автоматически модулем AI анализа [SecondBrain](https://t.me/sec_brainbot)*\n"
         
         try:
             note_file.write_text(markdown, encoding='utf-8')

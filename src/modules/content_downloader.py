@@ -361,7 +361,7 @@ class ContentDownloader:
                 cookies_file=str(cookies_file) if cookies_file.exists() else None
             )
             
-            video_path = temp_grabber.download_video(url, quality='worst')
+            video_path = temp_grabber.download_video(url, quality='best[height<=720]')
             if video_path:
                 media_files.append(video_path)
                 print(f"   ✅ {video_path.name}")
