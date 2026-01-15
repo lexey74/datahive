@@ -24,8 +24,8 @@ class TestTagManager:
         
         assert manager.tags_file == tags_file
         assert tags_file.exists()
-        # TagManager создаётся с дефолтными тегами
-        assert set(manager.get_all_tags()) == set(self.DEFAULT_TAGS)
+        # TagManager создаётся с пустым файлом тегов по умолчанию
+        assert set(manager.get_all_tags()) == set()
     
     def test_init_with_existing_file(self, mock_tags_file):
         """Тест инициализации с существующим файлом"""
@@ -52,9 +52,8 @@ class TestTagManager:
         manager = TagManager(tags_file)
         
         new_count = manager.add_tags(["python", "ai", "testing"])
-        
-        # ai уже в DEFAULT_TAGS, поэтому только 2 новых
-        assert new_count == 2
+        # Файл пустой по умолчанию, поэтому все 3 тега новые
+        assert new_count == 3
         tags = manager.get_all_tags()
         assert all(tag in tags for tag in ["python", "ai", "testing"])
     
@@ -69,8 +68,8 @@ class TestTagManager:
         # Должен добавиться только 1 новый тег (testing)
         assert new_count == 1
         tags = manager.get_all_tags()
-        # DEFAULT_TAGS (5) + python (1) + testing (1) = 7
-        assert len(tags) == 7
+        # Ожидаем 3 тега: python, ai, testing
+        assert len(tags) == 3
     
     def test_get_tags_string(self, sample_tags, tmp_path):
         """Тест получения тегов в виде строки"""
@@ -107,8 +106,8 @@ class TestTagManager:
         new_count = manager.add_tags([])
         
         assert new_count == 0
-        # Остаются только DEFAULT_TAGS
-        assert set(manager.get_all_tags()) == set(self.DEFAULT_TAGS)
+        # Файл остаётся пустым
+        assert set(manager.get_all_tags()) == set()
     
     def test_tags_normalization(self, tmp_path):
         """Тест нормализации тегов (lowercase, strip)"""
