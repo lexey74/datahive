@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 class Config:
     """Управление конфигурацией с поддержкой переменных окружения"""
     
-    def __init__(self, config_file: Path = None):
+    def __init__(self, config_file: Path = None) -> None:
         """
         Загрузка конфигурации
         

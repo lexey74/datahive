@@ -12,7 +12,7 @@ from modules.pipeline import SecBrainPipeline
 console = Console()
 
 
-def display_banner():
+def display_banner() -> None:
     """Отображение welcome banner"""
     banner = """
     ╔═══════════════════════════════════════════╗
@@ -23,7 +23,7 @@ def display_banner():
     console.print(Panel(banner, style="bold cyan"))
 
 
-def check_prerequisites():
+def check_prerequisites() -> bool:
     """Проверка необходимых зависимостей"""
     issues = []
     
@@ -79,7 +79,7 @@ def check_prerequisites():
     return True
 
 
-def main():
+def main() -> None:
     """Главная функция CLI"""
     display_banner()
     

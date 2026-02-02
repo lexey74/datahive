@@ -11,7 +11,7 @@ class TagManager:
     
     DEFAULT_TAGS = ["ai", "productivity", "coding", "health", "marketing"]
     
-    def __init__(self, config=None):
+    def __init__(self, config=None) -> None:
         """
         Инициализация менеджера тегов
         

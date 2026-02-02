@@ -12,7 +12,7 @@ description: Глобальный стандарт оформления текс
 Пример:
 ---
 type: note/article/transcription
-project: "Second Brain"
+project: "Data Hive"
 created: {{date}}
 tags: [ai, python, raw_data]
 source: "telegram/youtube/web"

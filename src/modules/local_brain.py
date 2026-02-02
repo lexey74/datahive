@@ -40,7 +40,7 @@ Output: strictly JSON.
 }
 """
     
-    def __init__(self, model: str = "llama3.2", base_url: str = "http://localhost:11434"):
+    def __init__(self, model: str = "llama3.2", base_url: str = "http://localhost:11434") -> None:
         """
         Инициализация LLM клиента
         

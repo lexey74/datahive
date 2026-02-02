@@ -1,5 +1,5 @@
 [Unit]
-Description=SecBrain Telegram Bot (webhook mode)
+Description=Data Hive Telegram Bot (webhook mode)
 After=network.target
 
 [Service]

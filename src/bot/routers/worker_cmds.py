@@ -64,7 +64,7 @@ async def cmd_transcribe(message: types.Message, state: FSMContext, config: BotC
     # Or rely on FSM state set by content handler.
     # For now, let's assume we look at the last folder in user dir.
     
-    user_folder = config.users_dir / message.from_user.username / "downloads"
+    user_folder = config.users_dir / "admin" / "downloads"
     # Find latest folder
     if not user_folder.exists():
         await message.reply("📂 Нет загруженных файлов.")

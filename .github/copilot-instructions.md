@@ -1,5 +1,5 @@
 # Project Context
-This is a "Second Brain" Telegram bot acting as a content ingestor.
+This is a "Data Hive" Telegram bot acting as a content ingestor.
 Pipeline: Download (Social Media) -> Transcribe (Whisper) -> Analyze (Ollama) -> Save (Obsidian Markdown).
 
 # Tech Stack

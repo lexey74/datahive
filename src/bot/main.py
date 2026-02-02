@@ -20,7 +20,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from src.bot.config import BotConfig
 from src.bot.routers import base
 
-async def main():
+async def main() -> None:
     # Load config
     config = BotConfig()
     
@@ -34,17 +34,21 @@ async def main():
     dp = Dispatcher(storage=MemoryStorage())
     
     from src.bot.routers import base, content, worker_cmds
+    from src.bot.middlewares.auth import AdminAccessMiddleware
     
     # Register routers
     dp.include_router(base.router)
     dp.include_router(content.router)
     dp.include_router(worker_cmds.router)
     
+    # Register Middleware
+    dp.update.outer_middleware(AdminAccessMiddleware())
+    
     # Inject config into middleware/workflow data
     dp["config"] = config
     
     # Delete webhook and start polling
-    logger.info("🚀 Starting SecBrain Bot (Aiogram 3.x)...")
+    logger.info("🚀 Starting Data Hive Bot (Aiogram 3.x)...")
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 

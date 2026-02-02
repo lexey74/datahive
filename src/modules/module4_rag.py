@@ -28,7 +28,7 @@ class RAGEngine:
         answer = rag.query(question)
     """
 
-    def __init__(self, user_root: Optional[Path] = None):
+    def __init__(self, user_root: Optional[Path] = None) -> None:
         try:
             import chromadb
             from sentence_transformers import SentenceTransformer
@@ -53,7 +53,7 @@ class RAGEngine:
         self._collection = None
         self._embedder = None
 
-    def _init_client(self):
+    def _init_client(self) -> None:
         if self._client is None:
             # ensure user_root exists
             if not self.user_root:

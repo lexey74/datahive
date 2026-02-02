@@ -14,7 +14,7 @@ from .local_brain import LocalBrain
 class SecBrainPipeline:
     """Главный пайплайн обработки"""
     
-    def __init__(self, config: dict):
+    def __init__(self, config: dict) -> None:
         """
         Инициализация пайплайна
         

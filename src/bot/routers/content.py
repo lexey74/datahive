@@ -11,9 +11,8 @@ from src.modules.downloader_base import DownloadSettings
 router = Router()
 
 def get_user_folder(user_id: int, username: str, config: BotConfig) -> Path:
-    folder_name = username if username else f"user_{user_id}"
-    # Sanitization could be added here
-    path = config.users_dir / folder_name / "downloads"
+    # Single user mode: always use 'admin' folder
+    path = config.users_dir / "admin" / "downloads"
     path.mkdir(parents=True, exist_ok=True)
     return path
 

@@ -37,7 +37,7 @@ class InstagramContent:
 class HybridGrabber:
     """Гибридный парсер Instagram контента"""
     
-    def __init__(self, output_dir: Path, cookies_file: Path = None):
+    def __init__(self, output_dir: Path, cookies_file: Path = None) -> None:
         """
         Инициализация grabber
         
@@ -50,7 +50,7 @@ class HybridGrabber:
         self.last_request_time = 0
         self.min_delay = 3.0  # Минимальная задержка между запросами (секунды)
     
-    def setup_instagrapi(self, session_file: Path):
+    def setup_instagrapi(self, session_file: Path) -> None:
         """
         Заглушка для совместимости с pipeline.py
         HybridGrabber использует gallery-dl, не требует instagrapi

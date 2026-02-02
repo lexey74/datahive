@@ -69,7 +69,7 @@ class DownloadResult:
     like_count: Optional[int] = None
     comment_count: Optional[int] = None
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Валидация после создания"""
         if not isinstance(self.media_files, list):
             self.media_files = []

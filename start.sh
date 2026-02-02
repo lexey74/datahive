@@ -1,5 +1,5 @@
 #!/bin/bash
-# Скрипт запуска SecBrain (Bot + MCP Server)
+# Скрипт запуска Data Hive (Bot)
 
 # Определение директории скрипта
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
@@ -23,24 +23,9 @@ if [ -f .env ]; then
     export $(grep -v '^#' .env | xargs)
 fi
 
-MCP_HOST="${MCP_HOST:-0.0.0.0}"  # Используем 0.0.0.0 по умолчанию если не задано
-MCP_PORT="${MCP_PORT:-8000}"
-
-# 3. Запуск MCP Сервера
-echo "🚀 Starting MCP Server on $MCP_HOST:$MCP_PORT..."
-# Проверяем, не запущен ли уже
-if pgrep -f "server_mcp:app" > /dev/null; then
-    echo "⚠️  MCP Server appears to be already running. Skipping start."
-else
-    # Запуск в фоне
-    nohup uvicorn server_mcp:app --host "$MCP_HOST" --port "$MCP_PORT" > logs/mcp.log 2>&1 &
-    MCP_PID=$!
-    echo "✅ MCP Server started with PID $MCP_PID (logs in logs/mcp.log)"
-    
-    # Гарантируем остановку сервера при выходе из скрипта
-    trap "echo '🛑 Stopping MCP Server...'; kill $MCP_PID" EXIT
+    export $(grep -v '^#' .env | xargs)
 fi
 
 # 4. Запуск Бота
-echo "🤖 Starting Telegram Bot..."
+echo "🤖 Starting Data Hive Bot..."
 python telegram_bot.py
