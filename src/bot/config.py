@@ -1,5 +1,4 @@
 from pathlib import Path
-from typing import List, Optional
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -29,25 +28,11 @@ class BotConfig(BaseSettings):
     ollama_model: str = Field("llama3.2", alias="OLLAMA_MODEL")
     ollama_model_complex: str = Field("qwen2.5:7b", alias="OLLAMA_MODEL_COMPLEX")
 
-    # Webhook
-    webhook_mode: bool = Field(False, alias="WEBHOOK_MODE")
-    webhook_listen: str = Field("127.0.0.1", alias="WEBHOOK_LISTEN")
-    webhook_port: int = Field(8080, alias="WEBHOOK_PORT")
-    webhook_public_url: str = Field("", alias="WEBHOOK_PUBLIC_URL")
-    webhook_path: str = Field("bot", alias="WEBHOOK_PATH")
-    webhook_secret_token: Optional[str] = Field(None, alias="WEBHOOK_SECRET_TOKEN")
-
-    # MCP
-    mcp_host: str = Field("0.0.0.0", alias="MCP_HOST")
-    mcp_port: int = Field(8000, alias="MCP_PORT")
-    public_mcp_url: str = Field("", alias="PUBLIC_MCP_URL")
-
     # Logs
     transcribe_log: Path = Path("logs/transcribe.log")
     ai_log: Path = Path("logs/ai.log")
     transcribe_pid: Path = Path("logs/transcribe.pid")
     ai_pid: Path = Path("logs/ai.pid")
-    auth_file: Path = Path("auth.json")
 
     def model_post_init(self, __context):
         # Ensure directories exist
