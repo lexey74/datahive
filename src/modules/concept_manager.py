@@ -103,6 +103,14 @@ class ConceptManager:
 
         # 1. Извлечь [[wiki-ссылки]] из Knowledge.md (оставлены LLM)
         wiki_terms = re.findall(r"\[\[([^\]]+)\]\]", knowledge_text)
+        # Отфильтровать служебные ссылки на файлы (description.md, transcript.md и т.п.)
+        # и числовые имена файлов изображений
+        _skip_patterns = re.compile(
+            r"\.(md|jpg|jpeg|png|mp4|webp)\b"   # ссылки на файлы
+            r"|^\d{2}_\d+_",                     # числовые имена (instagram media)
+            re.IGNORECASE,
+        )
+        wiki_terms = [t for t in wiki_terms if not _skip_patterns.search(t)]
         # 2. Добавить теги как дополнительные концепты
         extra = [t.replace("_", " ").title() for t in (tags or [])]
         all_terms = _dedupe([*wiki_terms, *extra])[:_MAX_CONCEPTS_PER_INGEST]
@@ -234,7 +242,8 @@ class ConceptManager:
 def _term_to_slug(term: str) -> str:
     """Конвертировать название концепта в slug для имени файла."""
     slug = term.lower()
-    slug = re.sub(r"[^\w\s-]", "", slug)
+    # Оставляем только ASCII буквы, цифры, пробелы и дефис (убираем кириллицу и спецсимволы)
+    slug = re.sub(r"[^a-z0-9\s-]", "", slug)
     slug = re.sub(r"[\s_-]+", "_", slug).strip("_")
     return slug[:60] or "concept"
 
