@@ -39,7 +39,7 @@ tests/              # pytest тесты (НЕ root)
 - **Downloaders:** yt-dlp, gallery-dl, youtube-comment-downloader
 - **Browser:** playwright (async_playwright API)
 - **ASR:** faster-whisper (CUDA → CPU/int8 fallback)
-- **AI:** Ollama локально (`llama3.2` для саммари, `qwen3:8b` для сложной логики)
+- **AI:** Ollama локально (`llama3.2` для саммари, `qwen3:4b` для сложной логики)
 - **Logging:** structlog (JSON-логи) или стандартный logging — никаких `print()`
 - **Testing:** pytest + pytest-mock + pytest-cov
 

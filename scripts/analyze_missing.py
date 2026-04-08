@@ -27,7 +27,7 @@ USER_ROOT = ROOT / "users" / "lexey"
 DOWNLOADS_DIR = USER_ROOT / "downloads"
 
 OLLAMA_URL = "http://localhost:11434"
-OLLAMA_MODEL = "qwen3:8b"
+OLLAMA_MODEL = "qwen3:4b"
 
 
 # ── Утилиты чтения ────────────────────────────────────────────────

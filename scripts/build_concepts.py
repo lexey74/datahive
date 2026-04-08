@@ -25,7 +25,7 @@ DOWNLOADS_DIR = USER_ROOT / "downloads"
 CONCEPTS_DIR = USER_ROOT / "wiki" / "concepts"
 
 OLLAMA_URL = "http://localhost:11434"
-OLLAMA_MODEL = "qwen3:8b"
+OLLAMA_MODEL = "qwen3:4b"
 
 
 def parse_tags(content: str) -> list[str]:
