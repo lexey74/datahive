@@ -177,18 +177,25 @@ class WikiLinter:
         all_tags: set[str] = set()
         for knowledge_md in self.downloads_dir.rglob("Knowledge.md"):
             content = self._read_safe(knowledge_md)
-            # Теги из YAML frontmatter
+            # Формат 1: tags:\n  - tag_name  (YAML-список)
             tags_block = re.search(r"^tags:\s*\n((?:\s+- .+\n)*)", content, re.MULTILINE)
             if tags_block:
                 tags = re.findall(r"- (.+)", tags_block.group(1))
                 all_tags.update(t.strip() for t in tags if t.strip() not in ("inbox",))
+            # Формат 2: tags: [#tag1, #tag2]  (inline с опциональным #)
+            inline = re.search(r"^tags:\s*\[(.+)\]", content, re.MULTILINE)
+            if inline:
+                for t in inline.group(1).split(","):
+                    t = t.strip().lstrip("#")
+                    if t and t not in ("inbox",):
+                        all_tags.add(t)
 
         existing_concepts: set[str] = set()
         if self.concepts_dir.exists():
             existing_concepts.update(f.stem for f in self.concepts_dir.glob("*.md"))
 
         for tag in all_tags:
-            slug = re.sub(r"[^\w]", "_", tag.lower()).strip("_")
+            slug = re.sub(r"[^a-z0-9]", "_", tag.lower()).strip("_")
             if slug not in existing_concepts and tag.lower() not in existing_concepts:
                 result.unlinked_tags.append(tag)
 
