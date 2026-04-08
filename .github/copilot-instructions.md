@@ -9,7 +9,7 @@ Pipeline: Download (Social Media) -> Transcribe (Whisper) -> Analyze (Ollama) ->
 - **Browser Automation:** `playwright` (for bypassing strict protections).
 - **AI/ML:**
   - `faster-whisper` (ASR).
-  - `ollama` (Models: `llama3.2`, `qwen2.5:7b`).
+  - `ollama` (Models: `llama3.2`, `qwen3:8b`).
 - **Utils:** `psutil` (Process monitoring), `rich` (Logging).
 - **Testing:** `pytest`, `pytest-mock`, `pytest-cov` (23 unit tests, 76-86% coverage on core modules).
 
@@ -59,7 +59,7 @@ Pipeline: Download (Social Media) -> Transcribe (Whisper) -> Analyze (Ollama) ->
   - AI summary должен быть в читаемом формате, НЕ сырой dict
 
 ## 4. AI & Resource Management
-- **Ollama:** Use specific models (`llama3.2` for summaries, `qwen2.5:7b` for complex logic). Keep prompts concise.
+- **Ollama:** Use specific models (`llama3.2` for summaries, `qwen3:8b` for complex logic). Keep prompts concise.
 - **Whisper:** Check availability of CUDA before loading; fallback to CPU (int8) if needed.
 - **PID Files:** When spawning background workers, write PID files to manage/kill "zombie" processes via `psutil`.
 

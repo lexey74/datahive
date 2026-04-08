@@ -33,7 +33,7 @@ class BotConfig(BaseSettings):
     # Ollama
     ollama_url: str = Field("http://localhost:11434", alias="OLLAMA_HOST")
     ollama_model: str = Field("llama3.2", alias="OLLAMA_MODEL")
-    ollama_model_complex: str = Field("qwen2.5:7b", alias="OLLAMA_MODEL_COMPLEX")
+    ollama_model_complex: str = Field("qwen3:8b", alias="OLLAMA_MODEL_COMPLEX")
 
     # Webhook
     webhook_mode: bool = Field(False, alias="WEBHOOK_MODE")

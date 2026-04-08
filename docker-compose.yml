@@ -7,7 +7,7 @@
 #
 # Первый запуск Ollama (нужно подтянуть модели):
 #   docker compose exec ollama ollama pull llama3.2
-#   docker compose exec ollama ollama pull qwen2.5:7b
+#   docker compose exec ollama ollama pull qwen3:8b
 #
 # Генерация API-ключей:
 #   openssl rand -hex 32
