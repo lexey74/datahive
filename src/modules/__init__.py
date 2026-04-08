@@ -1,5 +1,5 @@
 """
-SecBrain modules - Modular Architecture
+Data Hive modules - Modular Architecture
 
 Модульная архитектура v2:
 - Новые модули: content_router, platform-specific downloaders

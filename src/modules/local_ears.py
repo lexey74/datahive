@@ -1,9 +1,12 @@
 """
 LocalEars - Транскрибация видео через faster-whisper
 """
+import logging
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Optional
 from dataclasses import dataclass
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -52,17 +55,16 @@ class LocalEars:
         if self.model is None:
             try:
                 from faster_whisper import WhisperModel
-                
-                print(f"🔄 Загрузка Whisper модели ({self.model_size}, {self.compute_type})...")
-                print(f"   ⏳ Это может занять некоторое время при первом запуске...")
+
+                logger.info(f"🔄 Загрузка Whisper модели ({self.model_size}, {self.compute_type})...")
                 self.model = WhisperModel(
                     self.model_size,
                     device=self.device,
                     compute_type=self.compute_type,
                     cpu_threads=self.num_threads
                 )
-                print("   ✅ Модель Whisper готова")
-                
+                logger.info("✅ Модель Whisper готова")
+
             except ImportError:
                 raise ImportError(
                     "Библиотека faster-whisper не установлена. "
@@ -85,13 +87,12 @@ class LocalEars:
         # Проверяем, что это видео или аудио
         valid_extensions = ['.mp4', '.mov', '.avi', '.mkv', '.webm', '.mp3', '.m4a', '.wav', '.flac', '.ogg']
         if media_path.suffix.lower() not in valid_extensions:
-            print("ℹ️  Это изображение, транскрибация не требуется")
+            logger.info("ℹ️  Это изображение, транскрибация не требуется")
             return None
-        
+
         self.load_model()
-        
-        print("🎤 Транскрибация аудиодорожки...")
-        print("   ⏳ Обработка...")
+
+        logger.info(f"🎤 Транскрибация: {media_path.name}")
         
         # Запуск транскрибации с улучшенными параметрами
         segments, info = self.model.transcribe(
@@ -127,9 +128,9 @@ class LocalEars:
             
             segment_count += 1
             if segment_count % 10 == 0:
-                print(f"   📝 Обработано сегментов: {segment_count}")
-        
-        print(f"   ✅ Транскрибация завершена ({segment_count} сегментов)")
+                logger.debug(f"   📝 Обработано сегментов: {segment_count}")
+
+        logger.info(f"✅ Транскрибация завершена ({segment_count} сегментов, {info.duration:.1f}s)")
         
         return TranscriptResult(
             timed_transcript="\n".join(timed_lines),

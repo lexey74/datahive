@@ -1,6 +1,6 @@
 # Unit Tests
 
-Pytest-based unit test suite for SecBrain modules.
+Pytest-based unit test suite for Data Hive modules.
 
 ## Test Results ✅
 

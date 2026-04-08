@@ -1,8 +1,11 @@
 """
 LocalBrain - Анализ контента через локальную LLM (Ollama)
 """
-from typing import Dict, List, Optional
 import json
+import logging
+from typing import Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 
 class LocalBrain:
@@ -31,9 +34,13 @@ Tasks:
 
 5. Filter Comments: Keep ONLY comments that add value (critique, personal experience, alternative tools). Remove generic praise ("cool", "thanks").
 
+6. Wiki-Links: In the summary field, wrap key terms, names, tools, and concepts in Obsidian wiki-links: [[term]].
+   - Only wrap significant nouns/proper names (not verbs or common words).
+   - Examples: [[Python]], [[Andrej Karpathy]], [[Transformer]], [[RAG]].
+
 Output: strictly JSON.
 {
-  "summary": "markdown string with bullet points",
+  "summary": "markdown string with bullet points and [[wiki-links]] for key terms",
   "category": "string",
   "tags": ["tag1", "tag2"],
   "valuable_comments": ["user: text", "user: text"]
@@ -59,14 +66,8 @@ Output: strictly JSON.
         try:
             import ollama
             self.client = ollama.Client(host=self.base_url)
-            
-            # Простая проверка подключения
-            try:
-                print(f"✅ Ollama подключен: {self.model}")
-            except Exception as e:
-                print(f"⚠️  Предупреждение при проверке: {e}")
-                print(f"ℹ️  Попробую использовать {self.model} напрямую...")
-                
+            logger.info(f"✅ Ollama подключен: {self.model} @ {self.base_url}")
+
         except ImportError:
             raise ImportError(
                 "Библиотека ollama не установлена. "
@@ -76,32 +77,25 @@ Output: strictly JSON.
             raise ConnectionError(f"Не удалось подключиться к Ollama: {e}")
     
     def warm_up(self) -> bool:
-        """
-        Прогрев модели (загрузка в память)
-        
-        Returns:
-            True если успешно, False если ошибка
-        """
+        """Прогрев модели (загрузка в память)"""
         if self.client is None:
             self.initialize()
-        
+
         try:
-            print(f"🔥 Прогрев модели {self.model}...")
-            response = self.client.chat(
+            logger.info(f"🔥 Прогрев модели {self.model}...")
+            self.client.chat(
                 model=self.model,
-                messages=[
-                    {'role': 'user', 'content': 'Hello'}
-                ],
+                messages=[{'role': 'user', 'content': 'Hello'}],
                 options={
                     'num_predict': 10,
                     'num_thread': self.num_threads if self.num_threads else 8,
-                    'num_ctx': 512  # Минимальный контекст для прогрева
+                    'num_ctx': 512,
                 }
             )
-            print(f"✅ Модель готова к работе")
+            logger.info("✅ Модель готова к работе")
             return True
         except Exception as e:
-            print(f"⚠️  Прогрев не удался: {e}")
+            logger.warning(f"⚠️  Прогрев не удался: {e}")
             return False
     
     def analyze(
@@ -127,62 +121,41 @@ Output: strictly JSON.
         """
         if self.client is None:
             self.initialize()
-        
-        # Формирование промпта
+
         user_prompt = self._build_prompt(caption, transcript, comments, author)
         system_prompt = self.SYSTEM_PROMPT.replace("{known_tags}", known_tags)
-        
-        print("🧠 Анализ контента через LLM...")
-        print("   ⏳ Отправка запроса к модели...")
-        
+
+        logger.info("🧠 Анализ контента через LLM...")
+
         try:
-            from rich.progress import Progress, SpinnerColumn, TextColumn
-            from rich.console import Console
-            
-            console = Console()
-            
-            with Progress(
-                SpinnerColumn(),
-                TextColumn("[progress.description]{task.description}"),
-                console=console,
-                transient=True
-            ) as progress:
-                task = progress.add_task("   Анализ через AI... (может занять несколько минут)", total=None)
-                
-                response = self.client.chat(
-                    model=self.model,
-                    messages=[
-                        {'role': 'system', 'content': system_prompt},
-                        {'role': 'user', 'content': user_prompt}
-                    ],
-                    format='json',  # Требуем JSON ответ
-                    options={
-                        'temperature': 0.7,
-                        'num_predict': 500,  # Уменьшено для ускорения
-                        'num_thread': self.num_threads if self.num_threads else 8,
-                        'num_ctx': self.num_ctx if self.num_ctx else 8192
-                    }
-                )
-                
-                progress.update(task, completed=True)
-            
-            print("   ✅ Анализ завершён")
-            
-            # Парсинг JSON ответа
+            response = self.client.chat(
+                model=self.model,
+                messages=[
+                    {'role': 'system', 'content': system_prompt},
+                    {'role': 'user', 'content': user_prompt}
+                ],
+                format='json',
+                options={
+                    'temperature': 0.7,
+                    'num_predict': 500,
+                    'num_thread': self.num_threads if self.num_threads else 8,
+                    'num_ctx': self.num_ctx if self.num_ctx else 8192
+                }
+            )
+
+            logger.info("✅ Анализ завершён")
+
             result_text = response['message']['content']
-            result = json.loads(result_text)
-            
-            return result
-            
+            return json.loads(result_text)
+
         except TimeoutError as e:
-            print(f"⏱️  Timeout: {e}")
+            logger.error(f"⏱️  Timeout при запросе к LLM: {e}")
             return None
         except json.JSONDecodeError as e:
-            print(f"❌ Ошибка парсинга JSON: {e}")
-            print(f"Ответ LLM: {result_text[:200]}...")
+            logger.error(f"❌ Ошибка парсинга JSON от LLM: {e}")
             return None
         except Exception as e:
-            print(f"❌ Ошибка LLM: {e}")
+            logger.error(f"❌ Ошибка LLM: {e}")
             return None
     
     def _build_prompt(

@@ -1,4 +1,4 @@
-# 🎨 Оформление Telegram Бота SecBrain
+# 🎨 Оформление Telegram Бота Data Hive
 
 ## 📋 Чек-лист настройки через @BotFather
 
@@ -7,7 +7,7 @@
 /setname
 
 Новое имя:
-🧠 SecBrain - Personal Knowledge Manager
+🧠 Data Hive — Personal Knowledge Manager
 ```
 
 ### 2. Описание (показывается при первом запуске)
@@ -15,7 +15,7 @@
 /setdescription
 
 Новое описание:
-👋 Привет! Я SecBrain — твой личный помощник для сохранения контента.
+👋 Привет! Я Data Hive — твой личный помощник для сохранения контента.
 
 Я умею:
 📥 Скачивать посты из Instagram и YouTube
@@ -55,7 +55,7 @@
 
 **AI Промпт для генерации:**
 ```
-Create a minimalist bot avatar for "SecBrain" - a knowledge management assistant.
+Create a minimalist bot avatar for "Data Hive" - a knowledge management assistant.
 Style: Modern, flat design, tech-inspired
 Elements: Brain or cloud with documents, lock symbol (privacy), AI elements
 Colors: Blue and purple gradient

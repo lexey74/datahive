@@ -63,7 +63,7 @@ bot_config.json
 secrets.json
 Thumbs.db
 
-# SecBrain specific - sensitive data
+# Data Hive specific - sensitive data
 cookies.txt
 cookies/
 *.json
@@ -75,7 +75,7 @@ known_tags.json
 instagram_cookies.json
 test_*.json
 
-# SecBrain output directories
+# Data Hive output directories
 SecondBrain_Inbox/
 downloads/
 .temp/

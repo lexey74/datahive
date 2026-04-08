@@ -1,32 +1,59 @@
 services:
-  # 1. Telegram Bot Service
+  # ── 1. Telegram Bot ───────────────────────────────────────────
   bot:
     build: .
     container_name: datahive_bot
     command: python -m src.bot.main
     volumes: &app_volumes
-      # --- ВАЖНО: Маппинг реальной структуры из structure.md ---
-      # 1. Основное хранилище (Obsidian Vault пользователя)
       - ./users/${USER_NAME:-lexey}:/app/data/vault
-      # 2. Временные файлы
       - ./temp:/app/data/temp
-      # 3. Конфигурация бота (сессии, куки)
       - ./bot_state:/app/data/config
-      # 4. Логи
       - ./logs:/app/logs
-      # 5. Auth/Secrets mapping if they are files
       - ./auth.json:/app/auth.json
       - ./.env:/app/.env
       - ./src:/app/src
-
+    env_file: .env
     environment: &app_env
-      # Настройки путей внутри контейнера
       - DATA_DIR=/app/data
       - OUTPUT_DIR=/app/data/vault/downloads
       - TEMP_DIR=/app/data/temp
-      # Настройки доступа
       - OLLAMA_HOST=${OLLAMA_HOST:-http://host.docker.internal:11434}
-      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
-      # MCP Settings (Bot needs to know where MCP is if it talks to it, or shares env)
+    restart: unless-stopped
+    depends_on:
+      - nginx
+
+  # ── 2. Nginx reverse-proxy ────────────────────────────────────
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: datahive_nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./scripts/nginx_bot.conf:/etc/nginx/conf.d/datahive.conf:ro
+      - certbot_www:/var/www/certbot:ro
+      - certbot_conf:/etc/letsencrypt:ro
     restart: unless-stopped
 
+  # ── 3. Certbot (SSL) ──────────────────────────────────────────
+  # Запуск для получения/обновления сертификата:
+  #   docker compose run --rm certbot
+  certbot:
+    image: certbot/certbot:latest
+    container_name: datahive_certbot
+    volumes:
+      - certbot_www:/var/www/certbot
+      - certbot_conf:/etc/letsencrypt
+    command: >
+      certonly --webroot
+      --webroot-path=/var/www/certbot
+      --email admin@datahive.inno.co
+      --agree-tos
+      --no-eff-email
+      -d datahive.inno.co
+    profiles:
+      - certbot
+
+volumes:
+  certbot_www:
+  certbot_conf:

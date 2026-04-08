@@ -1,95 +1,87 @@
-# Webhook setup for SecBrain Telegram Bot
+# Webhook setup для Data Hive Telegram Bot
 
-This document explains how to switch the bot to webhook mode, obtain TLS certificates using Let's Encrypt (certbot), and configure Nginx to proxy requests to the local bot.
+Домен: **`datahive.inno.co`**
 
-Summary:
-- Bot will run in webhook mode and listen on a local port (default: `127.0.0.1:8080`).
-- Nginx terminates TLS on `example.com` and forwards requests to the local bot.
-- Telegram sends updates to `https://example.com/<url_path>`; the bot uses `run_webhook` and `setWebhook` automatically.
+Схема:
+- Бот слушает в webhook-режиме на `127.0.0.1:8080`
+- MCP SSE сервер слушает на `127.0.0.1:8000`
+- Nginx терминирует TLS на `datahive.inno.co` и проксирует оба сервиса
 
-## 1) Environment variables
-Add the following variables to your `.env` (or systemd EnvironmentFile):
+## 1) Переменные окружения
+Добавить в `.env`:
 
 ```
 WEBHOOK_MODE=true
 WEBHOOK_LISTEN=127.0.0.1
 WEBHOOK_PORT=8080
-# Public URL where Telegram will post updates (https://your.domain)
-WEBHOOK_PUBLIC_URL=https://example.com
-# Path on your domain for webhook (recommended to keep secret-like)
+# Публичный URL (Telegram будет слать updates сюда)
+WEBHOOK_PUBLIC_URL=https://datahive.inno.co
+# Путь webhook (лучше держать непредсказуемым)
 WEBHOOK_PATH=bot_abcd1234
-# Optional secret token for additional header verification
+# Секретный токен для проверки подлинности запросов от Telegram
 WEBHOOK_SECRET_TOKEN=<random-secret-string>
+
+# MCP
+PUBLIC_MCP_URL=https://datahive.inno.co/mcp
+MCP_HOST=127.0.0.1
+MCP_PORT=8000
+FASTMCP_ALLOW_HOSTS=datahive.inno.co,datahive.inno.co:*,localhost,localhost:*,127.0.0.1,127.0.0.1:*
+FASTMCP_ALLOW_ORIGINS=https://datahive.inno.co,http://localhost:*,http://127.0.0.1:*
 ```
 
-- `WEBHOOK_PUBLIC_URL` must be HTTPS. If you plan to use the same host for MCP, configure different paths.
-- `WEBHOOK_SECRET_TOKEN` causes Telegram to include the header `X-Telegram-Bot-Api-Secret-Token` with the provided value; the bot will receive it in the request headers via the `secret_token` param.
-
-## 2) Obtain TLS certificate (Let's Encrypt)
-Install certbot and request a certificate for your domain (adjust package manager if not Debian/Ubuntu):
+## 2) Получение SSL сертификата (Let's Encrypt)
 
 ```bash
 sudo apt update
 sudo apt install certbot python3-certbot-nginx -y
-sudo certbot --nginx -d example.com
+sudo certbot --nginx -d datahive.inno.co
 ```
 
-This will configure Nginx automatically and put certificates in `/etc/letsencrypt/live/example.com/`.
+Сертификаты будут в `/etc/letsencrypt/live/datahive.inno.co/`.
 
-If you prefer manual mode (for a Docker host or special setup):
+Для автопродления:
 ```bash
-sudo certbot certonly --standalone -d example.com
+sudo systemctl enable --now certbot.timer
 ```
 
-## 3) Nginx configuration
-Use the provided snippet `scripts/nginx_bot.conf` as a basis. Place it under `/etc/nginx/sites-available/secbrain` and symlink to `sites-enabled`:
+## 3) Nginx конфигурация
 
 ```bash
-sudo cp scripts/nginx_bot.conf /etc/nginx/sites-available/secbrain
-sudo ln -s /etc/nginx/sites-available/secbrain /etc/nginx/sites-enabled/secbrain
+sudo cp scripts/nginx_bot.conf /etc/nginx/sites-available/datahive
+sudo ln -s /etc/nginx/sites-available/datahive /etc/nginx/sites-enabled/datahive
 sudo nginx -t
 sudo systemctl reload nginx
 ```
 
-Notes:
-- `proxy_pass` points to `http://127.0.0.1:8080` by default — make sure `WEBHOOK_LISTEN`/`WEBHOOK_PORT` in `.env` match this.
-- Forwarded header `X-Telegram-Bot-Api-Secret-Token` is set so Telegram secret token is preserved.
+> `proxy_pass` для webhook → `http://127.0.0.1:8080`  
+> `proxy_pass` для MCP SSE → `http://127.0.0.1:8000` (с отключённой буферизацией)
 
-## 4) systemd service
-A sample unit `scripts/secbrain-bot.service` is provided. Install it with:
+## 4) systemd сервис
 
 ```bash
-sudo cp scripts/secbrain-bot.service /etc/systemd/system/secbrain-bot.service
+sudo cp scripts/datahive-bot.service /etc/systemd/system/datahive-bot.service
 sudo systemctl daemon-reload
-sudo systemctl enable --now secbrain-bot.service
-sudo journalctl -u secbrain-bot -f
+sudo systemctl enable --now datahive-bot.service
+sudo journalctl -u datahive-bot -f
 ```
 
-The unit uses `/home/lexey/projects/secbrain/.env` as `EnvironmentFile` — adjust path and `User` if needed.
+## 5) Проверка webhook
 
-## 5) Verify webhook
-After the bot starts, it will call `setWebhook` automatically using the `WEBHOOK_PUBLIC_URL` and `WEBHOOK_PATH` environment variables.
-
-You can verify with:
+После старта бот вызовет `setWebhook` автоматически. Проверить:
 
 ```bash
 curl -s "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getWebhookInfo" | jq .
 ```
 
-Look for `url` and `last_error_message` fields. If you see `last_error_message`, check `logs/bot.log` for details.
+Ожидаемый результат: поле `url` = `https://datahive.inno.co/<WEBHOOK_PATH>`, `pending_update_count` = 0.
 
 ## Troubleshooting
-- If `setWebhook` fails with 409 Conflict, it means another webhook is set for the bot token. Use `deleteWebhook` first:
 
+**409 Conflict** — уже есть активный webhook или polling:
 ```bash
 curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/deleteWebhook"
 ```
 
-- If Nginx returns 502 bad gateway, check that the bot process is listening on the expected local port and that `proxy_pass` matches.
-- If you rely on the `X-Telegram-Bot-Api-Secret-Token`, ensure the value in `.env` matches the header used by Telegram.
+**502 Bad Gateway** — бот не запущен или порт не совпадает с `WEBHOOK_PORT`.
 
----
-If you want, I can:
-- generate a recommended random `WEBHOOK_SECRET_TOKEN` and add it to `.env` for you,
-- prepare the exact nginx config with your real domain (if you provide it),
-- install and run certbot (requires sudo) — I can provide the commands to run locally.
+**SSE не работает** — убедиться, что в nginx для `/mcp` включено `proxy_buffering off`.

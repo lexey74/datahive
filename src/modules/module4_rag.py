@@ -65,7 +65,7 @@ class RAGEngine:
             # Persistent client pointing to per-user folder
             self._client = self.chromadb.PersistentClient(path=str(vector_path))
             # single collection for all user docs
-            self._collection = self._client.get_or_create_collection(name='secbrain')
+            self._collection = self._client.get_or_create_collection(name='datahive')
 
         if self._embedder is None:
             # load sentence-transformers model (CPU)

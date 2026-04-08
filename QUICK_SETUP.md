@@ -1,4 +1,4 @@
-# 🚀 Быстрая настройка бота SecBrain
+# 🚀 Быстрая настройка бота Data Hive
 
 ## 1️⃣ Открой @BotFather в Telegram
 
@@ -10,7 +10,7 @@
 ```
 Затем отправь:
 ```
-🧠 SecBrain - Personal Knowledge Manager
+🧠 Data Hive — Personal Knowledge Manager
 ```
 
 ### Описание:
@@ -19,7 +19,7 @@
 ```
 Затем отправь:
 ```
-👋 Привет! Я SecBrain — твой личный помощник для сохранения контента.
+👋 Привет! Я Data Hive — твой личный помощник для сохранения контента.
 
 Я умею:
 📥 Скачивать посты из Instagram и YouTube  
@@ -67,7 +67,7 @@ cancel - ❌ Отменить текущую операцию
 
 **Промпт для AI:**
 ```
-Minimalist bot avatar for SecBrain knowledge manager.
+Minimalist bot avatar for Data Hive knowledge manager.
 Blue and purple gradient, brain icon, lock symbol, 
 flat design, 512x512px, transparent background.
 ```

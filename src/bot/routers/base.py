@@ -12,7 +12,7 @@ async def cmd_start(message: types.Message):
     user_name = message.from_user.first_name if message.from_user else "User"
     
     welcome_text = f"""
-🧠 <b>SecBrain - Personal Knowledge Manager</b>
+🐝 <b>Data Hive — Personal Knowledge Manager</b>
 
 👋 Привет, {user_name}!
 
@@ -54,7 +54,7 @@ async def cmd_help(message: types.Message):
     Handler for /help command
     """
     help_text = """
-📖 <b>Полное руководство SecBrain</b>
+📖 <b>Полное руководство Data Hive</b>
 
 <b>📥 1. Загрузка контента:</b>
 • <b>Файлы и текст (отправляй без команды):</b>
@@ -79,7 +79,13 @@ async def cmd_help(message: types.Message):
 • /ai - Запустить AI анализ: тегирование, саммари (Ollama)
 • /ask &lt;вопрос&gt; - Умный поиск по вашей базе (RAG)
 
-<b>🔧 3. Интеграции:</b>
+<b>� 3. Wiki (LLM Knowledge Base):</b>
+• /wiki - Статистика базы знаний (источники, концепты, запросы)
+• /lint - Проверка здоровья wiki (битые ссылки, осиротевшие папки)
+• /concepts - Топ концептов по упоминаниям
+• /save - Сохранить последний ответ /ask в wiki
+
+<b>🔧 4. Утилиты:</b>
 • /mcp - Получить ключ для подключения IDE
 • /check - Проверить статус фоновых задач
 • /show - Показать файлы последней папки

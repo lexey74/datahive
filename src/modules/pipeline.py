@@ -1,53 +1,88 @@
 """
-Pipeline - Оркестрация всего процесса обработки Instagram контента
+Pipeline - Оркестрация всего процесса обработки контента (Data Hive)
 """
+from __future__ import annotations
+
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union, TYPE_CHECKING
 from datetime import datetime
 import re
+import logging
 from .tag_manager import TagManager
 from .hybrid_grabber import HybridGrabber
 from .local_ears import LocalEars
 from .local_brain import LocalBrain
+from .wiki_manager import WikiManager
+
+if TYPE_CHECKING:
+    from src.bot.config import BotConfig
+
+logger = logging.getLogger(__name__)
 
 
-class SecBrainPipeline:
+class DataHivePipeline:
     """Главный пайплайн обработки"""
-    
+
     def __init__(self, config: dict) -> None:
         """
-        Инициализация пайплайна
-        
+        Инициализация пайплайна.
+
         Args:
-            config: Словарь с конфигурацией
+            config: Словарь с конфигурацией (обратная совместимость с CLI).
+                    Для нового кода используй :meth:`from_bot_config`.
         """
         self.config = config
-        
-        # Инициализация модулей
+
         self.tag_manager = TagManager()
         self.grabber = HybridGrabber(
             output_dir=Path(config['temp_dir']),
             cookies_file=Path(config.get('cookies_file', 'cookies.txt'))
         )
         self.ears = LocalEars(
-            model_size=config.get('whisper_model', 'base'),
+            model_size=config.get('whisper_model', 'small'),
             device=config.get('device', 'cpu'),
-            num_threads=config.get('num_threads', 8)
+            num_threads=config.get('num_threads', 16),
+            compute_type=config.get('whisper_compute_type', 'int8'),
         )
         self.brain = LocalBrain(
-            model=config.get('ollama_model', 'llama3.2')
+            model=config.get('ollama_model', 'llama3.2'),
+            base_url=config.get('ollama_url', 'http://localhost:11434'),
         )
-        
-        # Установка параметров оптимизации
+
         if config.get('num_threads'):
             self.brain.num_threads = config['num_threads']
         if config.get('num_ctx'):
             self.brain.num_ctx = config['num_ctx']
-        
-        # Настройка instagrapi если есть session
+
+        # WikiManager — user_root задаётся позже через process()
+        self.wiki_manager: Optional[WikiManager] = None
+
         session_file = Path(config.get('session_file', 'session.json'))
         if session_file.exists():
             self.grabber.setup_instagrapi(session_file)
+
+    @classmethod
+    def from_bot_config(cls, bot_config: "BotConfig", output_dir: Path, user_root: Optional[Path] = None) -> "DataHivePipeline":
+        """
+        Создать пайплайн из BotConfig (aiogram-бот).
+
+        Args:
+            bot_config: Pydantic BotConfig из src/bot/config.py
+            output_dir: Папка для сохранения контента
+            user_root: Корневая папка пользователя (для wiki). Если None — wiki отключена.
+        """
+        config_dict = {
+            "temp_dir": str(output_dir),
+            "whisper_model": bot_config.whisper_model,
+            "whisper_compute_type": bot_config.whisper_compute_type,
+            "num_threads": bot_config.whisper_threads,
+            "ollama_model": bot_config.ollama_model,
+            "ollama_url": bot_config.ollama_url,
+        }
+        pipeline = cls(config_dict)
+        if user_root:
+            pipeline.wiki_manager = WikiManager(user_root)
+        return pipeline
     
     def process(self, url: str) -> Optional[Path]:
         """
@@ -59,24 +94,24 @@ class SecBrainPipeline:
         Returns:
             Путь к созданной заметке или None
         """
-        print(f"\n{'='*60}")
-        print(f"🚀 Обработка: {url}")
-        print(f"{'='*60}\n")
-        
+        logger.info("=" * 60)
+        logger.info(f"🚀 Обработка: {url}")
+        logger.info("=" * 60)
+
         # Шаг 1: Загрузка контента
         content = self.grabber.grab(url)
         if not content.media_path:
-            print("❌ Не удалось загрузить медиа")
+            logger.error("❌ Не удалось загрузить медиа")
             return None
-        
+
         # Шаг 2: Транскрибация (если видео)
         transcript_result = self.ears.transcribe(content.media_path)
         transcript_text = transcript_result.timed_transcript if transcript_result else ""
         full_text = transcript_result.full_text if transcript_result else ""
-        
+
         # Шаг 3: AI анализ
         known_tags_string = self.tag_manager.get_tags_string()
-        
+
         ai_result = self.brain.analyze(
             caption=content.caption,
             transcript=transcript_text,
@@ -84,19 +119,19 @@ class SecBrainPipeline:
             author=content.author,
             known_tags=known_tags_string
         )
-        
+
         if not ai_result:
-            print("❌ Ошибка AI анализа")
+            logger.error("❌ Ошибка AI анализа")
             return None
-        
+
         # Шаг 4: Обновление тегов
         new_tags = ai_result.get('tags', [])
         added_count = self.tag_manager.add_tags(new_tags)
         if added_count > 0:
-            print(f"✅ Добавлено новых тегов: {added_count}")
-        
+            logger.info(f"✅ Добавлено новых тегов: {added_count}")
+
         # Шаг 5: Создание Asset Bundle
-        print("\n📝 Создание заметки...")
+        logger.info("📝 Создание заметки...")
         try:
             note_path = self._create_note_bundle(
                 content=content,
@@ -104,15 +139,37 @@ class SecBrainPipeline:
                 transcript_text=transcript_text,
                 full_text=full_text
             )
-            print("   ✅ Заметка создана")
+            logger.info("✅ Заметка создана")
         except Exception as e:
-            print(f"❌ Ошибка создания заметки: {e}")
+            logger.error(f"❌ Ошибка создания заметки: {e}")
             return None
-        
-        print(f"\n{'='*60}")
-        print(f"✅ Готово! Заметка: {note_path}")
-        print(f"{'='*60}\n")
-        
+
+        logger.info(f"✅ Готово! Заметка: {note_path}")
+
+        # Шаг 6: Обновление wiki (index.md + log.md)
+        if self.wiki_manager:
+            try:
+                folder_name = note_path.parent.name
+                source = getattr(content, 'platform', 'unknown') or 'unknown'
+                tags = ai_result.get('tags', [])
+                summary = ai_result.get('summary', '')
+
+                self.wiki_manager.update_index(
+                    folder_name=folder_name,
+                    summary=summary,
+                    tags=tags,
+                    source=source,
+                    url=getattr(content, 'url', ''),
+                )
+                self.wiki_manager.append_log(
+                    operation="ingest",
+                    title=f"{source.capitalize()} | {folder_name}",
+                    details=f"Теги: {', '.join(tags[:8])}\nСаммари: {summary[:120] if isinstance(summary, str) else ''}",
+                    folder_name=folder_name,
+                )
+            except Exception as e:
+                logger.warning(f"⚠️ WikiManager ошибка: {e}")
+
         return note_path
     
     def _create_note_bundle(
@@ -235,3 +292,7 @@ tags:
         words = text.split()[:4]
         slug = "_".join(words)
         return self._sanitize_filename(slug)
+
+
+# Алиас для обратной совместимости со старым кодом
+SecBrainPipeline = DataHivePipeline

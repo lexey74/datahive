@@ -72,7 +72,7 @@ cl.dump_settings("session.json")
 ```bash
 # 1. Клонируйте репозиторий
 git clone <repo-url>
-cd secbrain
+cd datahive
 
 # 2. Создайте виртуальное окружение
 python -m venv venv

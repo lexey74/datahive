@@ -60,7 +60,7 @@ def _make_fake_env(monkeypatch):
             self.path = path
             self._col = FakeCollection()
 
-        def get_or_create_collection(self, name='secbrain'):
+        def get_or_create_collection(self, name='datahive'):
             return self._col
 
     monkeypatch.setitem(sys.modules, 'chromadb', types.SimpleNamespace(PersistentClient=FakeClient))
