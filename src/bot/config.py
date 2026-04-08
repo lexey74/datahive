@@ -24,6 +24,11 @@ class BotConfig(BaseSettings):
     whisper_model: str = Field("small", alias="WHISPER_MODEL")
     whisper_threads: int = Field(16, alias="WHISPER_THREADS")
     whisper_compute_type: str = Field("int8", alias="WHISPER_COMPUTE_TYPE")
+    # Если задан — LocalEars работает через HTTP-сервис (контейнер).
+    # Если пуст — faster-whisper запускается локально in-process.
+    whisper_url: str = Field("", alias="WHISPER_URL")
+    # Bearer-токен для авторизации в whisper-сервисе.
+    whisper_api_key: str = Field("", alias="WHISPER_API_KEY")
 
     # Ollama
     ollama_url: str = Field("http://localhost:11434", alias="OLLAMA_HOST")

@@ -1,0 +1,94 @@
+# DataHive Caddyfile
+#
+# Caddy автоматически получает TLS-сертификаты через Let's Encrypt.
+# Предварительно: DNS A-записи whisper.inno.co и ollama.inno.co
+# должны указывать на IP этого VPS.
+#
+# Переменные окружения подставляются из docker-compose environment:
+#   {env.WHISPER_API_KEY}
+#   {env.OLLAMA_API_KEY}
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# Проверка Bearer-токена реализована через request_header matcher:
+# Если заголовок Authorization не совпадает — возвращаем 401.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Глобальные настройки ──────────────────────────────────────────────────
+{
+    # Email для Let's Encrypt (замените на свой)
+    email admin@inno.co
+
+    # Логи ошибок
+    log {
+        level ERROR
+    }
+}
+
+# ── whisper.inno.co ───────────────────────────────────────────────────────
+whisper.inno.co {
+
+    # /health доступен без авторизации (мониторинг, healthcheck)
+    handle /health {
+        reverse_proxy whisper:9000
+    }
+
+    # Всё остальное — только с Bearer-токеном
+    handle {
+        @unauthorized not header Authorization "Bearer {env.WHISPER_API_KEY}"
+        respond @unauthorized "Unauthorized" 401
+
+        reverse_proxy whisper:9000
+    }
+
+    # Логи доступа
+    log {
+        output file /data/logs/whisper_access.log {
+            roll_size 10mb
+            roll_keep 5
+        }
+    }
+}
+
+# ── ollama.inno.co ────────────────────────────────────────────────────────
+ollama.inno.co {
+
+    # Публичные эндпоинты Ollama — ограничиваем только нужными путями
+    # /api/tags  — список моделей (безопасно, без Bearer)
+    handle /api/tags {
+        @unauthorized not header Authorization "Bearer {env.OLLAMA_API_KEY}"
+        respond @unauthorized "Unauthorized" 401
+
+        reverse_proxy ollama:11434
+    }
+
+    # Генерация / чат — только с Bearer-токеном
+    handle /api/* {
+        @unauthorized not header Authorization "Bearer {env.OLLAMA_API_KEY}"
+        respond @unauthorized "Unauthorized" 401
+
+        # Большие запросы (длинные транскрипты → Ollama)
+        request_body {
+            max_size 50MB
+        }
+
+        reverse_proxy ollama:11434 {
+            # Увеличиваем таймаут: Ollama может думать долго
+            transport http {
+                response_header_timeout 600s
+                dial_timeout             30s
+            }
+        }
+    }
+
+    # Всё остальное — закрыто
+    handle {
+        respond "Not Found" 404
+    }
+
+    log {
+        output file /data/logs/ollama_access.log {
+            roll_size 10mb
+            roll_keep 5
+        }
+    }
+}

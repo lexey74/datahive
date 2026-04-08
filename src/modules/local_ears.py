@@ -1,7 +1,17 @@
 """
-LocalEars - Транскрибация видео через faster-whisper
+LocalEars - Транскрибация видео через faster-whisper (локально) или HTTP-сервис.
+
+Режимы работы:
+  1. Локальный (по умолчанию): faster-whisper запускается in-process.
+  2. Удалённый (whisper_url задан): запросы к DataHive Whisper Service
+     (services/whisper/main.py). Локальная модель не загружается.
 """
 import logging
+import urllib.request
+import urllib.error
+import json
+import mimetypes
+import uuid
 from pathlib import Path
 from typing import Optional
 from dataclasses import dataclass
@@ -19,14 +29,16 @@ class TranscriptResult:
 
 
 class LocalEars:
-    """Локальная транскрибация аудио/видео"""
+    """Локальная транскрибация аудио/видео (или HTTP к whisper-сервису)"""
     
     def __init__(
         self, 
-        model_size: str = "small",  # Изменено с "base" на "small" для лучшей точности
+        model_size: str = "small",
         device: str = "cpu", 
-        num_threads: int = 16,  # Оптимизировано: используем гиперпоточность для максимальной скорости
-        compute_type: str = "int8"  # int8 для CPU (float16 не поддерживается эффективно)
+        num_threads: int = 16,
+        compute_type: str = "int8",
+        whisper_url: str = "",          # Если задан — используется HTTP-режим
+        whisper_api_key: str = "",      # Bearer-токен для HTTP-режима
     ):
         """
         Инициализация Whisper модели
@@ -43,12 +55,23 @@ class LocalEars:
                          int8 - оптимально для CPU: быстро + хорошая точность
                          float16 - только для GPU
                          float32 - самое медленное, максимальная точность
+            whisper_url: Базовый URL whisper-сервиса (напр. http://whisper:9000).
+                        Если пуст — используется локальная модель.
+            whisper_api_key: Bearer-токен для авторизации в whisper-сервисе.
+                            Если пуст — заголовок Authorization не отправляется.
         """
         self.model_size = model_size
         self.device = device
         self.num_threads = num_threads
         self.compute_type = compute_type
+        self.whisper_url = whisper_url.rstrip("/")
+        self.whisper_api_key = whisper_api_key
         self.model = None
+
+        if self.whisper_url:
+            logger.info(f"🌐 LocalEars: HTTP-режим → {self.whisper_url}")
+        else:
+            logger.info("💻 LocalEars: локальный режим (faster-whisper)")
     
     def load_model(self) -> None:
         """Ленивая загрузка модели"""
@@ -73,23 +96,86 @@ class LocalEars:
     
     def transcribe(self, media_path: Path) -> Optional[TranscriptResult]:
         """
-        Транскрибация медиафайла
+        Транскрибация медиафайла.
+        Автоматически выбирает HTTP-режим (если задан whisper_url) или локальный.
         
         Args:
             media_path: Путь к видео/аудио файлу
             
         Returns:
-            TranscriptResult или None если не видео
+            TranscriptResult или None если файл не является аудио/видео
         """
         if not media_path or not media_path.exists():
             return None
         
-        # Проверяем, что это видео или аудио
         valid_extensions = ['.mp4', '.mov', '.avi', '.mkv', '.webm', '.mp3', '.m4a', '.wav', '.flac', '.ogg']
         if media_path.suffix.lower() not in valid_extensions:
             logger.info("ℹ️  Это изображение, транскрибация не требуется")
             return None
 
+        if self.whisper_url:
+            return self._transcribe_remote(media_path)
+        return self._transcribe_local(media_path)
+
+    # ------------------------------------------------------------------
+    # HTTP-режим (whisper-сервис в контейнере)
+    # ------------------------------------------------------------------
+
+    def _transcribe_remote(self, media_path: Path) -> Optional[TranscriptResult]:
+        """Отправляет файл на HTTP-сервис и возвращает TranscriptResult."""
+        url = f"{self.whisper_url}/transcribe"
+        logger.info(f"🌐 HTTP-транскрибация → {url}  ({media_path.name})")
+
+        # Определяем MIME-тип
+        mime_type, _ = mimetypes.guess_type(str(media_path))
+        mime_type = mime_type or "application/octet-stream"
+
+        # Формируем multipart/form-data вручную (без зависимостей типа requests)
+        boundary = uuid.uuid4().hex
+        with open(media_path, "rb") as fh:
+            file_data = fh.read()
+
+        body = (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="file"; filename="{media_path.name}"\r\n'
+            f"Content-Type: {mime_type}\r\n\r\n"
+        ).encode() + file_data + f"\r\n--{boundary}--\r\n".encode()
+
+        req = urllib.request.Request(
+            url,
+            data=body,
+            method="POST",
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        )
+        if self.whisper_api_key:
+            req.add_header("Authorization", f"Bearer {self.whisper_api_key}")
+
+        try:
+            with urllib.request.urlopen(req, timeout=600) as resp:
+                payload = json.loads(resp.read().decode())
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode(errors="replace")
+            raise RuntimeError(f"Whisper-сервис вернул {exc.code}: {detail}") from exc
+        except urllib.error.URLError as exc:
+            raise RuntimeError(f"Не удалось подключиться к whisper-сервису ({url}): {exc.reason}") from exc
+
+        logger.info(
+            f"✅ HTTP-транскрибация завершена "
+            f"(lang={payload.get('language')}, duration={payload.get('duration', 0):.1f}s)"
+        )
+        return TranscriptResult(
+            timed_transcript=payload["timed_transcript"],
+            full_text=payload["full_text"],
+            language=payload.get("language", "ru"),
+            duration=float(payload.get("duration", 0.0)),
+        )
+
+    # ------------------------------------------------------------------
+    # Локальный режим (faster-whisper in-process)
+    # ------------------------------------------------------------------
+
+    def _transcribe_local(self, media_path: Path) -> Optional[TranscriptResult]:
+        """Транскрибация с использованием локальной Whisper модели."""
         self.load_model()
 
         logger.info(f"🎤 Транскрибация: {media_path.name}")
@@ -109,12 +195,10 @@ class LocalEars:
                 min_silence_duration_ms=2000,
                 speech_pad_ms=400
             ),
-            # Начальный промпт для контекста (помогает с русским языком)
             initial_prompt="Транскрипция видео на русском языке из Instagram. "
                           "Включает разговорную речь, сленг, упоминания технологий и социальных сетей."
         )
         
-        # Формирование результатов
         timed_lines = []
         full_lines = []
         segment_count = 0

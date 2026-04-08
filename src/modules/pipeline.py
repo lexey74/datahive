@@ -43,6 +43,8 @@ class DataHivePipeline:
             device=config.get('device', 'cpu'),
             num_threads=config.get('num_threads', 16),
             compute_type=config.get('whisper_compute_type', 'int8'),
+            whisper_url=config.get('whisper_url', ''),
+            whisper_api_key=config.get('whisper_api_key', ''),
         )
         self.brain = LocalBrain(
             model=config.get('ollama_model', 'llama3.2'),
@@ -76,6 +78,8 @@ class DataHivePipeline:
             "whisper_model": bot_config.whisper_model,
             "whisper_compute_type": bot_config.whisper_compute_type,
             "num_threads": bot_config.whisper_threads,
+            "whisper_url": bot_config.whisper_url,
+            "whisper_api_key": bot_config.whisper_api_key,
             "ollama_model": bot_config.ollama_model,
             "ollama_url": bot_config.ollama_url,
         }

@@ -1,7 +1,7 @@
 # Core dependencies
 yt-dlp>=2024.1.0
 gallery-dl>=1.31.0
-faster-whisper>=1.0.0
+# faster-whisper — вынесен в services/whisper/ (отдельный контейнер)
 ollama>=0.1.0
 rich>=13.7.0
 playwright>=1.40.0
@@ -18,12 +18,13 @@ psutil>=5.9.0
 python-dotenv>=1.0.0
 aiosqlite>=0.20.0
 
-# Testing
-pytest>=7.4.0
-pytest-mock>=3.12.0
-pytest-cov>=4.1.0
+# Testing (только для локальной разработки, не нужны в Docker)
+# pytest>=7.4.0
+# pytest-mock>=3.12.0
+# pytest-cov>=4.1.0
 
 # RAG / Vector search
+# torch устанавливается отдельно в Dockerfile с --index-url cpu-only (~220 MB вместо ~2 GB)
 chromadb>=0.3.27
 sentence-transformers>=2.2.2
 langchain-text-splitters>=0.3.0
