@@ -74,12 +74,8 @@ async def handle_media(message: types.Message, state: FSMContext, config: BotCon
     # Aligning with original logic which handled photos/videos
     pass
 
-@router.message(F.text)
+@router.message(F.text & ~F.text.startswith("/"))
 async def handle_text(message: types.Message, state: FSMContext, config: BotConfig):
     """Handle simple text notes"""
-    # Check if command
-    if message.text.startswith("/"):
-        return
-        
     # Save as note
     await message.reply("📝 Заметка сохранена.")
