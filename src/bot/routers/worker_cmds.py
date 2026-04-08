@@ -63,7 +63,7 @@ async def cmd_transcribe(message: types.Message, state: FSMContext, config: BotC
     user_id = message.from_user.id
     username = message.from_user.username or ""
 
-    user_folder = config.users_dir / "admin" / "downloads"
+    user_folder = config.users_dir / config.user_name / "downloads"
     if not user_folder.exists():
         await message.reply("📂 Нет загруженных файлов.")
         return
@@ -112,7 +112,7 @@ async def cmd_ai(message: types.Message, config: BotConfig, bot: Bot):
         from src.modules.local_brain import LocalBrain
         from src.modules.tag_manager import TagManager
 
-        user_folder = config.users_dir / "admin" / "downloads"
+        user_folder = config.users_dir / config.user_name / "downloads"
         folders = sorted(
             [f for f in user_folder.iterdir() if f.is_dir()],
             key=lambda x: x.stat().st_mtime,
@@ -153,7 +153,7 @@ async def cmd_ai(message: types.Message, config: BotConfig, bot: Bot):
 
             # Обновить wiki (index.md + log.md)
             try:
-                user_root = config.users_dir / "admin"
+                user_root = config.users_dir / config.user_name
                 wm = WikiManager(user_root)
                 wm.update_index(
                     folder_name=latest_folder.name,
@@ -240,7 +240,7 @@ async def cmd_ask(message: types.Message, config: BotConfig) -> None:
     status_msg = await message.reply(f"🔍 Ищу ответ на: «{question[:80]}»...")
 
     try:
-        user_root = config.users_dir / "admin"
+        user_root = config.users_dir / config.user_name
         downloads_dir = user_root / "downloads"
 
         if not downloads_dir.exists() or not any(downloads_dir.iterdir()):

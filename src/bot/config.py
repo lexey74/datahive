@@ -17,6 +17,7 @@ class BotConfig(BaseSettings):
     # Paths
     users_dir: Path = Field(Path("users"), alias="USERS_DIR")
     downloads_dir: Path = Field(Path("downloads"), alias="DOWNLOADS_DIR")
+    user_name: str = Field("admin", alias="USER_NAME")
 
     # Whisper
     whisper_model: str = Field("small", alias="WHISPER_MODEL")

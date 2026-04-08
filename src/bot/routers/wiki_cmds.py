@@ -32,8 +32,7 @@ _last_answers: dict[int, dict] = {}
 
 def _get_user_root(config: BotConfig, user_id: int | None = None) -> Path:
     """Вернуть корневую папку пользователя."""
-    # TODO: в будущем разделить по user_id; сейчас — admin
-    return config.users_dir / "admin"
+    return config.users_dir / config.user_name
 
 
 def save_answer_keyboard(user_id: int) -> InlineKeyboardMarkup:
