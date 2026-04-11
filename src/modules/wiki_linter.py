@@ -11,10 +11,15 @@ WikiLinter — проверка здоровья wiki по паттерну Karp
 from __future__ import annotations
 
 import logging
+import os
 import re
+from datetime import datetime
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+# Не считать концепты пустыми в течение этого количества дней после создания
+EMPTY_CONCEPT_GRACE_DAYS = int(os.getenv("CONCEPT_GRACE_DAYS", "7"))
 
 
 class WikiLintResult:
@@ -156,16 +161,38 @@ class WikiLinter:
     # ── Проверка 3: пустые концепт-страницы ───────────────────────
 
     def _check_empty_concepts(self, result: WikiLintResult) -> None:
-        """Концепт-страницы с шаблонным Синтезом и 0 упоминаний."""
+        """Концепт-страницы с шаблонным Синтезом и 0 упоминаний.
+
+        Концепты, созданные недавно (младше EMPTY_CONCEPT_GRACE_DAYS),
+        не считаются пустыми — допускается период «grace», когда страницы
+        могли быть созданы автоматически и ещё не набрали упоминаний.
+        """
         if not self.concepts_dir.exists():
             return
+
         for page in self.concepts_dir.glob("*.md"):
             content = self._read_safe(page)
             mentions_val = _parse_frontmatter_field(content, "mentions")
             mentions_count = int(mentions_val) if mentions_val and mentions_val.isdigit() else 0
             has_template_synthesis = "_Накапливается автоматически" in content
-            if mentions_count == 0 and has_template_synthesis:
-                result.empty_concepts.append(page.stem)
+
+            # Если есть упоминания или нет шаблонного синтеза — не считать пустым
+            if mentions_count != 0 or not has_template_synthesis:
+                continue
+
+            # Если есть поле first_seen и дата внутри grace-period — пропускаем
+            first_seen_val = _parse_frontmatter_field(content, "first_seen")
+            if first_seen_val:
+                try:
+                    first_seen_date = datetime.strptime(first_seen_val, "%Y-%m-%d")
+                    age_days = (datetime.now() - first_seen_date).days
+                    if age_days < EMPTY_CONCEPT_GRACE_DAYS:
+                        continue
+                except Exception:
+                    # Если не удалось распарсить дату — считаем страницу старой
+                    pass
+
+            result.empty_concepts.append(page.stem)
 
     # ── Проверка 4: теги без concept-страниц ──────────────────────
 
