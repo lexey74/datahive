@@ -1,13 +1,10 @@
 # DataHive — docker-compose
-# Три сервиса: bot, whisper, ollama
+# Два сервиса: bot, whisper.
+# Ollama вынесена в отдельный проект /home/lexey/projects/ollama/
 # TLS и публичный доступ — через общий Caddy (/home/lexey/projects/caddy/)
 #
 # Использование:
 #   docker compose up -d
-#
-# Первый запуск Ollama (нужно подтянуть модели):
-#   docker compose exec ollama ollama pull llama3.2
-#   docker compose exec ollama ollama pull qwen3:4b
 #
 # Генерация API-ключей:
 #   openssl rand -hex 32
@@ -24,14 +21,13 @@ services:
     depends_on:
       whisper:
         condition: service_healthy
-      ollama:
-        condition: service_healthy
     env_file: .env
     environment:
       # Внутри Docker-сети — без TLS, с API-ключом
       WHISPER_URL: http://datahive-whisper:9000
       WHISPER_API_KEY: ${WHISPER_API_KEY}
-      OLLAMA_HOST: http://datahive-ollama:11434
+      # Ollama — standalone контейнер в projects_net
+      OLLAMA_HOST: http://ollama:11434
     volumes:
       - ./users:/app/users
       - ./downloads:/app/downloads
@@ -42,6 +38,8 @@ services:
     networks:
       - datahive_internal
       - datahive_external   # выход в интернет (api.telegram.org)
+      - projects_net        # доступ к ollama
+
   whisper:
     build:
       context: ./services/whisper
@@ -59,12 +57,11 @@ services:
       PRELOAD_MODEL: ${WHISPER_PRELOAD:-true}
     volumes:
       - whisper_models:/root/.cache/huggingface
-    # Порт НЕ публикуем на хост — доступ только через Docker-сети
     expose:
       - "9000"
     networks:
       - datahive_internal
-      - projects_net       # Caddy видит контейнер по имени datahive-whisper
+      - projects_net
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/health"]
       interval: 30s
@@ -72,50 +69,17 @@ services:
       retries: 5
       start_period: 60s
 
-  # ── Ollama ─────────────────────────────────────────────────────────────────
-  ollama:
-    image: ollama/ollama:latest
-    container_name: datahive-ollama
-    restart: unless-stopped
-    environment:
-      OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:-5m}
-      OLLAMA_HOST: 0.0.0.0:11434
-    volumes:
-      - ollama_data:/root/.ollama
-    expose:
-      - "11434"
-    networks:
-      - datahive_internal
-      - projects_net       # Caddy видит контейнер по имени datahive-ollama
-    healthcheck:
-      test: ["CMD", "ollama", "list"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 30s
-
-# ── GPU-вариант (раскомментировать для Ollama с CUDA) ─────────────────────
-# ollama:
-#   deploy:
-#     resources:
-#       reservations:
-#         devices:
-#           - driver: nvidia
-#             count: 1
-#             capabilities: [gpu]
-
 volumes:
   whisper_models:
-  ollama_data:
 
 networks:
-  # Внутренняя сеть: bot ↔ whisper ↔ ollama (без доступа Caddy)
+  # Внутренняя сеть: bot ↔ whisper (без доступа снаружи)
   datahive_internal:
     driver: bridge
     internal: true
-  # Обычная сеть для выхода бота в интернет (api.telegram.org)
+  # Сеть для выхода бота в интернет (api.telegram.org)
   datahive_external:
     driver: bridge
-  # Общая сеть проектов — Caddy видит whisper и ollama
+  # Общая сеть проектов — Caddy + ollama
   projects_net:
     external: true

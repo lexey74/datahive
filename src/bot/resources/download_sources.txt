@@ -1,0 +1,10 @@
+# Реестр источников, которые бот умеет скачивать.
+# Формат: <domain>/<path-pattern>
+# Поддерживаются glob-паттерны (*).
+
+youtube.com/watch*
+youtube.com/shorts/*
+youtu.be/*
+instagram.com/p/*
+instagram.com/reel/*
+instagram.com/reels/*
