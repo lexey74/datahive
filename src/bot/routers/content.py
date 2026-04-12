@@ -502,11 +502,154 @@ async def handle_expansion_save_confirmation(message: types.Message, state: FSMC
 
 @router.message(F.photo | F.video | F.document)
 async def handle_media(message: types.Message, state: FSMContext, config: BotConfig):
-    """Handle direct media uploads"""
-    await message.reply("📥 Медиа получено. Сохраняю...")
-    # Implementation of media saving would go here.
-    # Aligning with original logic which handled photos/videos
-    pass
+    """Handle forwarded/direct video, document and photo messages."""
+    user_id = message.from_user.id if message.from_user else 0
+    username = message.from_user.username if message.from_user else ""
+    user_folder = get_user_folder(user_id, username or "", config)
+
+    # --- Определяем тип и получаем file_id / имя файла ---
+    if message.video:
+        media_obj = message.video
+        media_type = "video"
+        original_name = media_obj.file_name or f"video_{media_obj.file_id[:8]}.mp4"
+        mime = media_obj.mime_type or "video/mp4"
+    elif message.document:
+        media_obj = message.document
+        media_type = "document"
+        original_name = media_obj.file_name or f"document_{media_obj.file_id[:8]}.bin"
+        mime = media_obj.mime_type or "application/octet-stream"
+    elif message.photo:
+        media_obj = message.photo[-1]  # берём максимальное разрешение
+        media_type = "photo"
+        original_name = f"photo_{media_obj.file_id[:8]}.jpg"
+        mime = "image/jpeg"
+    else:
+        await message.reply("❓ Неизвестный тип медиа.")
+        return
+
+    # --- Извлекаем caption и мета-данные пересланного сообщения ---
+    caption = message.caption or ""
+    forward_from: str = ""
+    forward_date: str = ""
+    if message.forward_origin:
+        origin = message.forward_origin
+        # MessageOriginUser / MessageOriginChannel / MessageOriginChat / MessageOriginHiddenUser
+        if hasattr(origin, "sender_user") and origin.sender_user:
+            forward_from = f"@{origin.sender_user.username}" if origin.sender_user.username else origin.sender_user.full_name
+        elif hasattr(origin, "chat") and origin.chat:
+            forward_from = f"@{origin.chat.username}" if origin.chat.username else origin.chat.title
+        elif hasattr(origin, "sender_user_name") and origin.sender_user_name:
+            forward_from = origin.sender_user_name
+        if hasattr(origin, "date") and origin.date:
+            forward_date = origin.date.strftime("%Y-%m-%d")
+
+    # --- Сообщаем пользователю, что собираемся делать ---
+    plan_lines = [f"📥 <b>Получено {media_type}:</b> <code>{original_name}</code>"]
+    if forward_from:
+        plan_lines.append(f"📤 Источник: {forward_from}")
+    if caption:
+        plan_lines.append(f"� Подпись: <i>{caption[:120]}</i>")
+    plan_lines += [
+        "",
+        "⏳ <b>Что делаю:</b>",
+        "• Скачиваю файл из Telegram",
+        "• Создаю папку и сохраняю медиафайл",
+        "• Генерирую description.md с метаданными",
+        "• Обновляю wiki-индекс и лог",
+    ]
+    status_msg = await message.reply("\n".join(plan_lines))
+
+    try:
+        # --- Скачиваем файл через Telegram ---
+        file = await message.bot.get_file(media_obj.file_id)
+        ts = datetime.now()
+        ts_folder = ts.strftime("%Y-%m-%d_%H-%M")
+        ts_iso = ts.strftime("%Y-%m-%d")
+
+        # Чистим имя для папки
+        slug = re.sub(r"[^\w\s-]", "", caption[:50]).strip()
+        slug = re.sub(r"[\s_]+", "_", slug) or media_type
+        folder_name = f"{ts_folder}_telegram_{media_type}_{slug}"
+        media_dir = user_folder / folder_name
+        media_dir.mkdir(parents=True, exist_ok=True)
+
+        # Определяем расширение
+        ext = Path(original_name).suffix or ".bin"
+        save_name = f"{media_type}{ext}"
+        save_path = media_dir / save_name
+
+        # Скачиваем файл (aiogram 3: download_file — async, принимает Path)
+        await message.bot.download_file(file.file_path, destination=save_path)
+
+        # --- Создаём description.md с frontmatter ---
+        desc_path = media_dir / "description.md"
+        frontmatter_lines = [
+            "---",
+            f'title: "{caption[:80] or original_name}"',
+            f"author: \"{forward_from or 'unknown'}\"",
+            f"date: {ts_iso}",
+            f"source: telegram",
+            f"type: description",
+            f"media_type: {media_type}",
+            f"mime: {mime}",
+            f"original_file: {original_name}",
+        ]
+        if forward_date:
+            frontmatter_lines.append(f"forward_date: {forward_date}")
+        frontmatter_lines.append("---")
+
+        desc_lines = frontmatter_lines + [
+            "",
+            f"# {caption[:80] or original_name}",
+            "",
+        ]
+        if forward_from:
+            desc_lines += [f"**Источник:** {forward_from}", ""]
+        if caption:
+            desc_lines += ["## Описание", "", caption, ""]
+        desc_lines += [f"**Файл:** `{save_name}`", ""]
+
+        desc_path.write_text("\n".join(desc_lines), encoding="utf-8")
+
+        # --- Обновляем wiki index и log ---
+        try:
+            user_root = config.users_dir / config.user_name
+            wm = WikiManager(user_root)
+            wm.update_index(
+                folder_name=folder_name,
+                summary=caption[:200] or original_name,
+                tags=["telegram", media_type],
+                source="telegram",
+            )
+            wm.append_log(
+                operation="ingest",
+                title=f"Telegram {media_type} | {folder_name}",
+                details=f"Файл: {save_name}, источник: {forward_from or 'direct'}",
+                folder_name=folder_name,
+            )
+        except Exception as e:
+            logger.warning(f"Не удалось обновить wiki: {e}")
+
+        file_size_kb = save_path.stat().st_size // 1024 if save_path.exists() else 0
+        done_lines = [
+            f"✅ <b>Готово! Вот что было сделано:</b>",
+            "",
+            f"📁 Папка: <code>{folder_name}</code>",
+            f"🎞 Файл сохранён: <code>{save_name}</code> ({file_size_kb} КБ)",
+            f"📄 Создан: <code>description.md</code> с YAML-метаданными",
+            f"🗂 Обновлён wiki-индекс и лог",
+        ]
+        if forward_from:
+            done_lines.append(f"📤 Источник: {forward_from}")
+        if forward_date:
+            done_lines.append(f"📅 Дата оригинала: {forward_date}")
+        if caption:
+            done_lines.append(f"\n💬 <i>{caption[:120]}</i>")
+        await status_msg.edit_text("\n".join(done_lines))
+
+    except Exception as e:
+        logger.exception(f"Ошибка сохранения медиа: {e}")
+        await status_msg.edit_text(f"❌ Не удалось сохранить медиа: {str(e)[:200]}")
 
 @router.message(StateFilter(None), F.text & ~F.text.startswith("/"))
 async def handle_text(message: types.Message, state: FSMContext, config: BotConfig):
