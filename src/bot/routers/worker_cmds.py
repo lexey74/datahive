@@ -21,9 +21,8 @@ async def run_transcription(file_path: Path, output_dir: Path, config: BotConfig
 
     try:
         ears = LocalEars(
-            model_size=config.whisper_model,
-            num_threads=config.whisper_threads,
-            compute_type=config.whisper_compute_type,
+            whisper_url=config.whisper_url,
+            whisper_api_key=config.whisper_api_key,
         )
 
         transcript_result = await asyncio.to_thread(ears.transcribe, file_path)

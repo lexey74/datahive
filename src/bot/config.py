@@ -20,14 +20,8 @@ class BotConfig(BaseSettings):
     downloads_dir: Path = Field(Path("downloads"), alias="DOWNLOADS_DIR")
     user_name: str = Field("admin", alias="USER_NAME")
 
-    # Whisper
-    whisper_model: str = Field("small", alias="WHISPER_MODEL")
-    whisper_threads: int = Field(16, alias="WHISPER_THREADS")
-    whisper_compute_type: str = Field("int8", alias="WHISPER_COMPUTE_TYPE")
-    # Если задан — LocalEars работает через HTTP-сервис (контейнер).
-    # Если пуст — faster-whisper запускается локально in-process.
+    # Whisper (HTTP-сервис whisper.inno.co)
     whisper_url: str = Field("", alias="WHISPER_URL")
-    # Bearer-токен для авторизации в whisper-сервисе.
     whisper_api_key: str = Field("", alias="WHISPER_API_KEY")
 
     # Ollama

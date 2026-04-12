@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import re
+from contextlib import asynccontextmanager
 from datetime import datetime
 from fnmatch import fnmatch
 from pathlib import Path
@@ -19,6 +20,28 @@ from src.modules.wiki_manager import WikiManager
 
 router = Router()
 logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def typing_action(message: types.Message):
+    """Показывает статус 'Печатаю...' пока выполняется долгая операция."""
+    async def _keep_typing():
+        while True:
+            try:
+                await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")
+            except Exception:
+                pass
+            await asyncio.sleep(4)
+
+    task = asyncio.create_task(_keep_typing())
+    try:
+        yield
+    finally:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 
 URL_REGEX = re.compile(r"(https?://[^\s<>()]+|www\.[^\s<>()]+)", re.IGNORECASE)
 DOWNLOAD_SOURCES_PATH = Path(__file__).resolve().parents[1] / "resources" / "download_sources.txt"
@@ -134,7 +157,10 @@ def _ollama_chat(
             "num_predict": num_predict,
         },
     )
-    return response["message"]["content"].strip()
+    raw = response["message"]["content"]
+    # qwen3:4b возвращает <think>...</think> перед ответом — убираем
+    raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL)
+    return raw.strip()
 
 
 async def _analyze_message_context(text: str, urls: list[str], config: BotConfig) -> str:
@@ -338,7 +364,8 @@ async def handle_url(message: types.Message, state: FSMContext, config: BotConfi
 
         await status_msg.edit_text("⬇️ Начинаю загрузку...")
         
-        result = await asyncio.to_thread(content_router.download, url)
+        async with typing_action(message):
+            result = await asyncio.to_thread(content_router.download, url)
         
         await status_msg.edit_text(
             f"✅ <b>Загрузка завершена!</b>\n\n"
@@ -376,7 +403,8 @@ async def handle_link_download_decision(message: types.Message, state: FSMContex
             username = message.from_user.username if message.from_user else ""
             user_folder = get_user_folder(user_id, username or "", config)
             content_router = ContentRouter(_build_download_settings(), user_folder)
-            result = await asyncio.to_thread(content_router.download, current_url)
+            async with typing_action(message):
+                result = await asyncio.to_thread(content_router.download, current_url)
             decisions.append(
                 {
                     "url": current_url,
@@ -430,7 +458,8 @@ async def handle_post_process_action(message: types.Message, state: FSMContext, 
 
     dialog: list[dict] = []
     base_context = _build_base_context_text(data)
-    question = await _generate_expansion_question(config, base_context, dialog)
+    async with typing_action(message):
+        question = await _generate_expansion_question(config, base_context, dialog)
     dialog.append({"role": "assistant", "content": question})
 
     await state.update_data(expansion_dialog=dialog, expansion_base_context=base_context)
@@ -450,7 +479,8 @@ async def handle_topic_expansion_dialog(message: types.Message, state: FSMContex
     user_text = (message.text or "").strip()
 
     if _is_finish_dialog(user_text):
-        summary = await _generate_expansion_summary(config, base_context, dialog)
+        async with typing_action(message):
+            summary = await _generate_expansion_summary(config, base_context, dialog)
         await state.update_data(expansion_summary=summary)
         await state.set_state(ContentStates.waiting_expansion_save_confirmation)
         await message.answer(
@@ -463,7 +493,8 @@ async def handle_topic_expansion_dialog(message: types.Message, state: FSMContex
     user_answers = sum(1 for item in dialog if item.get("role") == "user")
 
     if user_answers >= 4:
-        summary = await _generate_expansion_summary(config, base_context, dialog)
+        async with typing_action(message):
+            summary = await _generate_expansion_summary(config, base_context, dialog)
         await state.update_data(expansion_dialog=dialog, expansion_summary=summary)
         await state.set_state(ContentStates.waiting_expansion_save_confirmation)
         await message.answer(
@@ -472,7 +503,8 @@ async def handle_topic_expansion_dialog(message: types.Message, state: FSMContex
         )
         return
 
-    question = await _generate_expansion_question(config, base_context, dialog)
+    async with typing_action(message):
+        question = await _generate_expansion_question(config, base_context, dialog)
     dialog.append({"role": "assistant", "content": question})
     await state.update_data(expansion_dialog=dialog)
     await message.answer(question)
@@ -579,7 +611,8 @@ async def handle_media(message: types.Message, state: FSMContext, config: BotCon
         save_path = media_dir / save_name
 
         # Скачиваем файл (aiogram 3: download_file — async, принимает Path)
-        await message.bot.download_file(file.file_path, destination=save_path)
+        async with typing_action(message):
+            await message.bot.download_file(file.file_path, destination=save_path)
 
         # --- Создаём description.md с frontmatter ---
         desc_path = media_dir / "description.md"
@@ -678,7 +711,8 @@ async def handle_text(message: types.Message, state: FSMContext, config: BotConf
             not_downloadable_links.append(url)
 
     status_msg = await message.answer("🧠 Анализирую сообщение через LLM...")
-    analysis = await _analyze_message_context(text, urls, config)
+    async with typing_action(message):
+        analysis = await _analyze_message_context(text, urls, config)
 
     response_parts = ["🧠 <b>Краткий анализ</b>", analysis]
     if urls:

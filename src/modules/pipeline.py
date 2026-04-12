@@ -39,10 +39,6 @@ class DataHivePipeline:
             cookies_file=Path(config.get('cookies_file', 'cookies.txt'))
         )
         self.ears = LocalEars(
-            model_size=config.get('whisper_model', 'small'),
-            device=config.get('device', 'cpu'),
-            num_threads=config.get('num_threads', 16),
-            compute_type=config.get('whisper_compute_type', 'int8'),
             whisper_url=config.get('whisper_url', ''),
             whisper_api_key=config.get('whisper_api_key', ''),
         )
@@ -75,9 +71,6 @@ class DataHivePipeline:
         """
         config_dict = {
             "temp_dir": str(output_dir),
-            "whisper_model": bot_config.whisper_model,
-            "whisper_compute_type": bot_config.whisper_compute_type,
-            "num_threads": bot_config.whisper_threads,
             "whisper_url": bot_config.whisper_url,
             "whisper_api_key": bot_config.whisper_api_key,
             "ollama_model": bot_config.ollama_model,
