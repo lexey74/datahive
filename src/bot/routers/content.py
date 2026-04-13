@@ -156,11 +156,15 @@ def _ollama_chat(
             "temperature": temperature,
             "num_predict": num_predict,
         },
+        think=False,  # отключаем thinking-mode для qwen3:4b и аналогов
     )
     raw = response["message"]["content"]
-    # qwen3:4b возвращает <think>...</think> перед ответом — убираем
+    # На случай если think=False не поддерживается моделью — убираем блоки вручную
     raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL)
-    return raw.strip()
+    result = raw.strip()
+    if not result:
+        raise ValueError("LLM вернул пустой ответ")
+    return result
 
 
 async def _analyze_message_context(text: str, urls: list[str], config: BotConfig) -> str:
