@@ -24,8 +24,6 @@ class YouTubeBaseDownloader(BaseDownloader):
         self,
         settings: DownloadSettings,
         output_dir: Optional[Path] = None,
-        external_site_url: str = "https://en.ssyoutube.com/en/download",
-        external_site_timeout_ms: int = 30_000,
     ) -> None:
         super().__init__(settings, output_dir)
 
@@ -45,8 +43,8 @@ class YouTubeBaseDownloader(BaseDownloader):
 
         self.grabber = ProductionYouTubeGrabber(cookie_manager=cookie_manager)
         self._external_grabber = ExternalSiteGrabber(
-            base_url=external_site_url,
-            timeout_ms=external_site_timeout_ms,
+            base_url=settings.external_site_url,
+            timeout_ms=settings.external_site_timeout_ms,
         )
 
     @property

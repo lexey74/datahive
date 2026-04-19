@@ -125,6 +125,9 @@ class YouTubeVideoResult(DownloadResult):
 # SETTINGS - Настройки загрузки
 # ============================================================================
 
+DEFAULT_EXTERNAL_SITE_URL = "https://en.ssyoutube.com/en/download"
+DEFAULT_EXTERNAL_SITE_TIMEOUT_MS = 30_000
+
 
 @dataclass
 class DownloadSettings:
@@ -155,6 +158,10 @@ class DownloadSettings:
     # Прочее
     timeout: int = 600  # Секунды
     retry_attempts: int = 3
+
+    # Внешний сайт-посредник для загрузки YouTube
+    external_site_url: str = DEFAULT_EXTERNAL_SITE_URL
+    external_site_timeout_ms: int = DEFAULT_EXTERNAL_SITE_TIMEOUT_MS
 
 
 # ============================================================================

@@ -45,10 +45,8 @@ class YouTubeShortsDownloader(YouTubeBaseDownloader):
         self,
         settings: DownloadSettings,
         output_dir: Optional[Path] = None,
-        external_site_url: str = "https://en.ssyoutube.com/en/download",
-        external_site_timeout_ms: int = 30_000,
     ):
-        super().__init__(settings, output_dir, external_site_url, external_site_timeout_ms)
+        super().__init__(settings, output_dir)
 
         # Инициализируем сервис комментариев
         self.comment_service = YouTubeCommentService()

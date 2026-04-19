@@ -143,7 +143,7 @@ def _is_finish_dialog(text: str) -> bool:
     return (text or "").strip().lower() in FINISH_DIALOG_WORDS
 
 
-def _build_download_settings() -> DownloadSettings:
+def _build_download_settings(config: BotConfig) -> DownloadSettings:
     youtube_cookies = Path("cookies.txt") if Path("cookies.txt").exists() else None
     instagram_cookies = (
         Path("cookies/instagram.json")
@@ -156,6 +156,8 @@ def _build_download_settings() -> DownloadSettings:
         youtube_cookies=youtube_cookies,
         instagram_cookies=instagram_cookies,
         youtube_cookies_dir=youtube_cookies_dir,
+        external_site_url=config.external_site_url,
+        external_site_timeout_ms=config.external_site_timeout_ms,
     )
 
 
@@ -414,7 +416,7 @@ async def handle_url(
             return
         user_folder = get_user_folder(user.id, user.username or "", config)
 
-        settings = _build_download_settings()
+        settings = _build_download_settings(config)
         content_router = ContentRouter(settings, user_folder)
 
         if not content_router.is_supported(url):
@@ -465,7 +467,7 @@ async def handle_link_download_decision(
             user_id = message.from_user.id if message.from_user else 0
             username = message.from_user.username if message.from_user else ""
             user_folder = get_user_folder(user_id, username or "", config)
-            content_router = ContentRouter(_build_download_settings(), user_folder)
+            content_router = ContentRouter(_build_download_settings(config), user_folder)
             async with typing_action(message):
                 result = await asyncio.to_thread(content_router.download, current_url)
             if result.folder_path is None:
@@ -794,7 +796,7 @@ async def handle_text(
     user_id = message.from_user.id if message.from_user else 0
     username = message.from_user.username if message.from_user else ""
     user_folder = get_user_folder(user_id, username or "", config)
-    content_router = ContentRouter(_build_download_settings(), user_folder)
+    content_router = ContentRouter(_build_download_settings(config), user_folder)
 
     downloadable_links: list[str] = []
     not_downloadable_links: list[str] = []
