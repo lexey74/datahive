@@ -2,11 +2,14 @@
 YouTube Video Downloader
 
 Скачивает обычные YouTube видео (горизонтальные).
-Использует ProductionYouTubeGrabber для обхода блокировок.
+Использует цепочку стратегий: ExternalSiteGrabber → ProductionYouTubeGrabber (fallback).
 """
 
+import asyncio
 from pathlib import Path
 from typing import Dict, List, Optional
+
+import structlog
 
 from .downloader_base import (
     BaseDownloader,
@@ -22,8 +25,17 @@ from .downloader_utils import (
     format_duration,
     format_count,
 )
+from .external_site_grabber import ExternalSiteGrabber
+from .youtube_grabber_base import YouTubeDownloadStrategy
 from .youtube_grabber_v2 import ProductionYouTubeGrabber, ImprovedCookieManager
 from .youtube_comment_service import YouTubeCommentService
+
+logger = structlog.get_logger("datahive.youtube_video_downloader")
+
+
+class DownloadError(Exception):
+    """Ошибка загрузки видео — все стратегии не сработали"""
+    pass
 
 
 class YouTubeVideoDownloader(BaseDownloader):
@@ -33,11 +45,17 @@ class YouTubeVideoDownloader(BaseDownloader):
     Поддерживает:
     - Обычные видео (горизонтальные)
     - Различное качество (best, 1080p, 720p и т.д.)
-    - Автоматический обход блокировок через ProductionYouTubeGrabber
+    - Цепочку стратегий: ExternalSiteGrabber → ProductionYouTubeGrabber (fallback)
     - Скачивание комментариев через YouTubeCommentService
     """
 
-    def __init__(self, settings: DownloadSettings, output_dir: Optional[Path] = None):
+    def __init__(
+        self,
+        settings: DownloadSettings,
+        output_dir: Optional[Path] = None,
+        external_site_url: str = "https://en.ssyoutube.com/en/download",
+        external_site_timeout_ms: int = 30_000,
+    ):
         super().__init__(settings, output_dir)
 
         # Создаем cookie manager
@@ -60,8 +78,19 @@ class YouTubeVideoDownloader(BaseDownloader):
         # Инициализируем ProductionYouTubeGrabber
         self.grabber = ProductionYouTubeGrabber(cookie_manager=cookie_manager)
 
+        # Первичная стратегия — внешний сайт-посредник
+        self._external_grabber = ExternalSiteGrabber(
+            base_url=external_site_url,
+            timeout_ms=external_site_timeout_ms,
+        )
+
         # Инициализируем сервис комментариев
         self.comment_service = YouTubeCommentService()
+
+    @property
+    def strategies(self) -> list[YouTubeDownloadStrategy]:
+        """Цепочка стратегий: ExternalSiteGrabber первым, ProductionYouTubeGrabber как fallback."""
+        return [self._external_grabber, self.grabber]
 
     def can_handle(self, url: str) -> bool:
         """Проверяет, может ли обработать URL"""
@@ -101,12 +130,12 @@ class YouTubeVideoDownloader(BaseDownloader):
 
         print_progress(f"📁 Папка: {folder_path}", "")
 
-        # Скачиваем видео через ProductionYouTubeGrabber
+        # Скачиваем видео через цепочку стратегий
         print_progress(
             f"⬇️  Скачивание видео качество={self.settings.video_quality}...", ""
         )
-        video_path = self.grabber.download_video(
-            url=url, output_dir=folder_path, quality=self.settings.video_quality
+        video_path = asyncio.run(
+            self._run_strategy_chain(url, folder_path, self.settings.video_quality)
         )
         print_progress(f"✅ Видео скачано: {video_path.name}", "")
 
@@ -139,6 +168,66 @@ class YouTubeVideoDownloader(BaseDownloader):
             likes=metadata.get("like_count", 0),
             duration=metadata.get("duration", 0),
         )
+
+    async def _call_strategy(
+        self, strategy: YouTubeDownloadStrategy, url: str, folder_path: Path, quality: str
+    ) -> Path:
+        """
+        Вызывает стратегию, автоматически определяя sync/async реализацию.
+
+        Если `download_video` является корутиной — вызываем через await.
+        Если синхронная — запускаем в executor, чтобы не блокировать event loop.
+        """
+        import inspect
+        method = strategy.download_video
+        if inspect.iscoroutinefunction(method):
+            return await method(url, folder_path, quality)
+        else:
+            loop = asyncio.get_event_loop()
+            import functools
+            return await loop.run_in_executor(
+                None, functools.partial(method, url, folder_path, quality)
+            )
+
+    async def _run_strategy_chain(
+        self, url: str, folder_path: Path, quality: str
+    ) -> Path:
+        """
+        Перебирает стратегии по цепочке, возвращает путь к файлу при первом успехе.
+
+        Args:
+            url: URL видео
+            folder_path: Директория для сохранения
+            quality: Желаемое качество
+
+        Returns:
+            Путь к скачанному файлу
+
+        Raises:
+            DownloadError: Если все стратегии завершились неудачей
+        """
+        last_error: Optional[Exception] = None
+        for strategy in self.strategies:
+            strategy_name = type(strategy).__name__
+            try:
+                video_path = await self._call_strategy(strategy, url, folder_path, quality)
+                logger.info(
+                    "Стратегия загрузки сработала",
+                    strategy=strategy_name,
+                    url=url,
+                )
+                return video_path
+            except Exception as exc:
+                logger.warning(
+                    "Стратегия загрузки не сработала, переходим к следующей",
+                    strategy=strategy_name,
+                    error=str(exc),
+                )
+                last_error = exc
+
+        raise DownloadError(
+            f"Все стратегии загрузки не сработали для {url}"
+        ) from last_error
 
     def download_comments_only(self, url: str, folder_path: Path) -> Optional[Path]:
         """Скачивает только комментарии"""
