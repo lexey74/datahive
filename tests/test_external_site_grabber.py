@@ -2,7 +2,6 @@
 Тесты для ExternalSiteGrabber и цепочки стратегий YouTubeBaseDownloader.
 """
 
-import asyncio
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -38,7 +37,9 @@ def grabber() -> ExternalSiteGrabber:
 
 @pytest.fixture
 def settings(tmp_path: Path) -> DownloadSettings:
-    return DownloadSettings(youtube_cookies_dir=tmp_path / "cookies")
+    cookies_dir = tmp_path / "cookies"
+    cookies_dir.mkdir()
+    return DownloadSettings(youtube_cookies_dir=cookies_dir)
 
 
 def _make_playwright_mocks(
@@ -196,7 +197,11 @@ async def test_download_video_no_mp4_links(
 async def test_download_video_http_error_cleanup(
     grabber: ExternalSiteGrabber, tmp_path: Path
 ):
-    """HTTP 403 при скачивании → ExternalSiteError, частичный файл удалён."""
+    """HTTP 403 при скачивании → ExternalSiteError.
+
+    Файл не создаётся: ошибка возникает на raise_for_status() до записи данных,
+    поэтому video.mp4 никогда не появляется на диске.
+    """
     import httpx
 
     mock_playwright_cm, _, _ = _make_playwright_mocks()
@@ -241,7 +246,7 @@ async def test_download_video_http_error_cleanup(
                 output_dir=tmp_path,
             )
 
-    # Частичный файл должен быть удалён
+    # Файл не был создан — ошибка произошла до записи (raise_for_status выброшен до write_bytes)
     assert not (tmp_path / "video.mp4").exists()
 
 

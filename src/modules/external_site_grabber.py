@@ -3,6 +3,7 @@
 Используется для обхода блокировок IP на VPS.
 """
 
+import asyncio
 from pathlib import Path
 from urllib.parse import quote
 
@@ -173,23 +174,32 @@ class ExternalSiteGrabber:
         Raises:
             ExternalSiteError: При HTTP-ошибке
         """
+        loop = asyncio.get_running_loop()
         try:
             async with httpx.AsyncClient(follow_redirects=True, timeout=300.0) as client:
                 async with client.stream("GET", url) as response:
                     response.raise_for_status()
-                    try:
-                        async with output_path.open("wb") as f:
-                            async for chunk in response.aiter_bytes(chunk_size=65536):
-                                await f.write(chunk)
-                    except Exception:
-                        if output_path.exists():
-                            output_path.unlink()
-                        raise
+                    # Собираем чанки в памяти, затем записываем через executor,
+                    # чтобы не блокировать event loop синхронным file I/O
+                    chunks: list[bytes] = []
+                    async for chunk in response.aiter_bytes(chunk_size=65536):
+                        chunks.append(chunk)
+                    await loop.run_in_executor(
+                        None, output_path.write_bytes, b"".join(chunks)
+                    )
         except httpx.HTTPStatusError as exc:
+            if output_path.exists():
+                output_path.unlink()
             logger.warning("HTTP ошибка при загрузке файла", status_code=exc.response.status_code, error=str(exc))
             raise ExternalSiteError(
                 f"HTTP ошибка {exc.response.status_code} при загрузке видео"
             ) from exc
         except httpx.HTTPError as exc:
+            if output_path.exists():
+                output_path.unlink()
             logger.warning("Ошибка HTTP при загрузке файла", error=str(exc))
             raise ExternalSiteError(f"Ошибка при загрузке видео: {exc}") from exc
+        except Exception:
+            if output_path.exists():
+                output_path.unlink()
+            raise
