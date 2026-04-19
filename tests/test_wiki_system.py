@@ -1,25 +1,27 @@
 """
 Тесты для WikiManager, ConceptManager и WikiLinter.
 """
+
 from __future__ import annotations
 
 import re
 from pathlib import Path
 
-import pytest
-
 
 # ── WikiManager ───────────────────────────────────────────────────
+
 
 class TestWikiManager:
     def test_init_index_created_on_first_update(self, tmp_path):
         from src.modules.wiki_manager import WikiManager
+
         wm = WikiManager(tmp_path)
         wm.update_index("2026-04-08_youtube_test", "Тестовое видео", ["python", "ai"])
         assert (tmp_path / "index.md").exists()
 
     def test_index_contains_folder_name(self, tmp_path):
         from src.modules.wiki_manager import WikiManager
+
         wm = WikiManager(tmp_path)
         wm.update_index("2026-04-08_youtube_test", "Тестовое видео", ["python"])
         content = (tmp_path / "index.md").read_text(encoding="utf-8")
@@ -27,15 +29,19 @@ class TestWikiManager:
 
     def test_index_update_existing(self, tmp_path):
         from src.modules.wiki_manager import WikiManager
+
         wm = WikiManager(tmp_path)
         wm.update_index("2026-04-08_youtube_test", "Первый саммари", ["python"])
-        wm.update_index("2026-04-08_youtube_test", "Обновлённый саммари", ["python", "llm"])
+        wm.update_index(
+            "2026-04-08_youtube_test", "Обновлённый саммари", ["python", "llm"]
+        )
         content = (tmp_path / "index.md").read_text(encoding="utf-8")
         # Должна быть только одна запись с этим именем
         assert content.count("2026-04-08_youtube_test") == 1
 
     def test_index_platform_section(self, tmp_path):
         from src.modules.wiki_manager import WikiManager
+
         wm = WikiManager(tmp_path)
         wm.update_index("folder_yt", "Видео", ["tag1"], source="youtube")
         wm.update_index("folder_ig", "Пост", ["tag2"], source="instagram")
@@ -45,12 +51,14 @@ class TestWikiManager:
 
     def test_log_created_on_append(self, tmp_path):
         from src.modules.wiki_manager import WikiManager
+
         wm = WikiManager(tmp_path)
         wm.append_log("ingest", "Test ingest", "Теги: python, ai")
         assert (tmp_path / "log.md").exists()
 
     def test_log_contains_entry(self, tmp_path):
         from src.modules.wiki_manager import WikiManager
+
         wm = WikiManager(tmp_path)
         wm.append_log("ingest", "YouTube | test_folder", folder_name="test_folder")
         content = (tmp_path / "log.md").read_text(encoding="utf-8")
@@ -59,6 +67,7 @@ class TestWikiManager:
 
     def test_log_append_only(self, tmp_path):
         from src.modules.wiki_manager import WikiManager
+
         wm = WikiManager(tmp_path)
         wm.append_log("ingest", "Первый")
         wm.append_log("query", "Второй")
@@ -68,6 +77,7 @@ class TestWikiManager:
 
     def test_save_query_answer(self, tmp_path):
         from src.modules.wiki_manager import WikiManager
+
         wm = WikiManager(tmp_path)
         path = wm.save_query_answer(
             question="Что такое RAG?",
@@ -82,6 +92,7 @@ class TestWikiManager:
 
     def test_get_stats_empty(self, tmp_path):
         from src.modules.wiki_manager import WikiManager
+
         wm = WikiManager(tmp_path)
         stats = wm.get_stats()
         assert stats["total_sources"] == 0
@@ -89,6 +100,7 @@ class TestWikiManager:
 
     def test_get_stats_after_operations(self, tmp_path):
         from src.modules.wiki_manager import WikiManager
+
         wm = WikiManager(tmp_path)
         wm.update_index("folder1", "Первый", ["tag1"])
         wm.update_index("folder2", "Второй", ["tag2"])
@@ -103,6 +115,7 @@ class TestWikiManager:
 
 # ── ConceptManager ────────────────────────────────────────────────
 
+
 class TestConceptManager:
     def _make_knowledge_md(self, tmp_path: Path, content: str) -> Path:
         folder = tmp_path / "2026-04-08_test_folder"
@@ -113,9 +126,10 @@ class TestConceptManager:
 
     def test_update_concepts_creates_pages(self, tmp_path):
         from src.modules.concept_manager import ConceptManager
+
         kmd = self._make_knowledge_md(
             tmp_path,
-            "---\ntags:\n  - python\n---\n\n## Саммари\n\n[[Python]] используется для [[Machine Learning]].\n"
+            "---\ntags:\n  - python\n---\n\n## Саммари\n\n[[Python]] используется для [[Machine Learning]].\n",
         )
         concepts_dir = tmp_path / "wiki" / "concepts"
         cm = ConceptManager(concepts_dir=concepts_dir, ollama_model="llama3.2")
@@ -131,9 +145,10 @@ class TestConceptManager:
 
     def test_concept_page_has_correct_structure(self, tmp_path):
         from src.modules.concept_manager import ConceptManager
+
         kmd = self._make_knowledge_md(
             tmp_path,
-            "---\ntags:\n  - ai\n---\n\n## Саммари\n\n[[Transformer]] — архитектура.\n"
+            "---\ntags:\n  - ai\n---\n\n## Саммари\n\n[[Transformer]] — архитектура.\n",
         )
         concepts_dir = tmp_path / "wiki" / "concepts"
         cm = ConceptManager(concepts_dir=concepts_dir)
@@ -148,6 +163,7 @@ class TestConceptManager:
 
     def test_concept_mentions_increment(self, tmp_path):
         from src.modules.concept_manager import ConceptManager
+
         concepts_dir = tmp_path / "wiki" / "concepts"
         cm = ConceptManager(concepts_dir=concepts_dir)
 
@@ -167,9 +183,9 @@ class TestConceptManager:
 
     def test_list_concepts(self, tmp_path):
         from src.modules.concept_manager import ConceptManager
+
         kmd = self._make_knowledge_md(
-            tmp_path,
-            "## Саммари\n\n[[Python]] и [[AI]] в действии.\n"
+            tmp_path, "## Саммари\n\n[[Python]] и [[AI]] в действии.\n"
         )
         concepts_dir = tmp_path / "wiki" / "concepts"
         cm = ConceptManager(concepts_dir=concepts_dir)
@@ -180,6 +196,7 @@ class TestConceptManager:
 
 
 # ── WikiLinter ────────────────────────────────────────────────────
+
 
 class TestWikiLinter:
     def _setup_user_root(self, tmp_path: Path) -> Path:
@@ -194,6 +211,7 @@ class TestWikiLinter:
 
     def test_no_issues_empty_wiki(self, tmp_path):
         from src.modules.wiki_linter import WikiLinter
+
         user_root = self._setup_user_root(tmp_path)
         linter = WikiLinter(user_root)
         result = linter.run()
@@ -201,7 +219,7 @@ class TestWikiLinter:
 
     def test_orphan_folders_detected(self, tmp_path):
         from src.modules.wiki_linter import WikiLinter
-        from src.modules.wiki_manager import WikiManager
+
         user_root = self._setup_user_root(tmp_path)
         # Создаём папку в downloads, но не добавляем в index
         (user_root / "downloads" / "2026-04-08_orphan_folder").mkdir()
@@ -212,6 +230,7 @@ class TestWikiLinter:
     def test_no_orphan_when_indexed(self, tmp_path):
         from src.modules.wiki_linter import WikiLinter
         from src.modules.wiki_manager import WikiManager
+
         user_root = self._setup_user_root(tmp_path)
         folder_name = "2026-04-08_indexed_folder"
         (user_root / "downloads" / folder_name).mkdir()
@@ -224,11 +243,12 @@ class TestWikiLinter:
 
     def test_empty_concepts_detected(self, tmp_path):
         from src.modules.wiki_linter import WikiLinter
+
         user_root = self._setup_user_root(tmp_path)
         # Создаём концепт-страницу с шаблонным синтезом
         concept_page = user_root / "wiki" / "concepts" / "python.md"
         concept_page.write_text(
-            "---\ntype: concept\nterm: \"Python\"\nmentions: 0\n---\n\n"
+            '---\ntype: concept\nterm: "Python"\nmentions: 0\n---\n\n'
             "## Синтез\n\n_Накапливается автоматически по мере появления новых источников._\n\n"
             "## Упоминания\n\n",
             encoding="utf-8",
@@ -239,6 +259,7 @@ class TestWikiLinter:
 
     def test_format_report_no_issues(self, tmp_path):
         from src.modules.wiki_linter import WikiLinter
+
         user_root = self._setup_user_root(tmp_path)
         linter = WikiLinter(user_root)
         result = linter.run()
@@ -248,6 +269,7 @@ class TestWikiLinter:
 
     def test_format_report_with_issues(self, tmp_path):
         from src.modules.wiki_linter import WikiLintResult
+
         result = WikiLintResult()
         result.orphan_folders = ["folder1", "folder2"]
         result.broken_links = [("concepts/python.md", "NonExistent")]
@@ -261,15 +283,18 @@ class TestWikiLinter:
 
 # ── WikiManager utils ─────────────────────────────────────────────
 
+
 class TestWikiManagerUtils:
     def test_strip_markdown(self):
         from src.modules.wiki_manager import _strip_markdown
+
         assert _strip_markdown("**Привет** [[мир]]") == "Привет мир"
         assert _strip_markdown("[текст](http://url.com)") == "текст"
         assert _strip_markdown("# Заголовок") == "Заголовок"
 
     def test_make_slug(self):
         from src.modules.wiki_manager import _make_slug
+
         # ASCII слова работают корректно
         assert _make_slug("Python Machine Learning") == "python_machine_learning"
         # Нелатинские символы стрипаются, остаётся ASCII часть

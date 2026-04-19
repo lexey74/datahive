@@ -4,13 +4,13 @@ Pytest Configuration and Fixtures
 
 Общие фикстуры и настройки для всех тестов.
 """
+
 import pytest
 import sys
 from pathlib import Path
-from unittest.mock import Mock, MagicMock
 
 # Добавляем src в путь
-sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 
 @pytest.fixture
@@ -56,14 +56,14 @@ def sample_description():
 def mock_ollama_response():
     """Mock ответ от Ollama"""
     return {
-        'summary': 'Это тестовое резюме контента',
-        'tags': ['test', 'example', 'mock'],
-        'title': 'Тестовое видео',
-        'key_points': [
-            'Первый ключевой момент',
-            'Второй ключевой момент',
-            'Третий ключевой момент'
-        ]
+        "summary": "Это тестовое резюме контента",
+        "tags": ["test", "example", "mock"],
+        "title": "Тестовое видео",
+        "key_points": [
+            "Первый ключевой момент",
+            "Второй ключевой момент",
+            "Третий ключевой момент",
+        ],
     }
 
 
@@ -71,10 +71,14 @@ def mock_ollama_response():
 def mock_whisper_result():
     """Mock результат транскрибации Whisper"""
     return {
-        'text': 'Это тестовая транскрипция',
-        'segments': [
-            {'start': 0.0, 'end': 5.0, 'text': 'Привет, это тестовая транскрипция'},
-            {'start': 5.0, 'end': 10.0, 'text': 'Здесь мы тестируем работу системы'},
-            {'start': 10.0, 'end': 15.0, 'text': 'Проверяем правильность обработки текста'}
-        ]
+        "text": "Это тестовая транскрипция",
+        "segments": [
+            {"start": 0.0, "end": 5.0, "text": "Привет, это тестовая транскрипция"},
+            {"start": 5.0, "end": 10.0, "text": "Здесь мы тестируем работу системы"},
+            {
+                "start": 10.0,
+                "end": 15.0,
+                "text": "Проверяем правильность обработки текста",
+            },
+        ],
     }

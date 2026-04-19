@@ -20,7 +20,7 @@ from .downloader_base import (
     InstagramReelsResult,
     YouTubeVideoResult,
     DownloadSettings,
-    BaseDownloader
+    BaseDownloader,
 )
 
 # Утилиты
@@ -33,7 +33,7 @@ from .downloader_utils import (
     format_duration,
     format_count,
     get_file_size_mb,
-    print_progress
+    print_progress,
 )
 
 # Скачиватели
@@ -65,53 +65,44 @@ from .tag_manager import TagManager
 
 __all__ = [
     # ========== НОВАЯ АРХИТЕКТУРА (используйте это) ==========
-    
     # Базовые классы
-    'ContentSource',
-    'InstagramContentType',
-    'YouTubeContentType',
-    'DownloadResult',
-    'InstagramPostResult',
-    'InstagramReelsResult',
-    'YouTubeVideoResult',
-    'DownloadSettings',
-    'BaseDownloader',
-    
+    "ContentSource",
+    "InstagramContentType",
+    "YouTubeContentType",
+    "DownloadResult",
+    "InstagramPostResult",
+    "InstagramReelsResult",
+    "YouTubeVideoResult",
+    "DownloadSettings",
+    "BaseDownloader",
     # Утилиты
-    'clean_filename',
-    'extract_video_id_youtube',
-    'extract_shortcode_instagram',
-    'is_youtube_short',
-    'is_instagram_reel',
-    'format_duration',
-    'format_count',
-    'get_file_size_mb',
-    'print_progress',
-    
+    "clean_filename",
+    "extract_video_id_youtube",
+    "extract_shortcode_instagram",
+    "is_youtube_short",
+    "is_instagram_reel",
+    "format_duration",
+    "format_count",
+    "get_file_size_mb",
+    "print_progress",
     # Скачиватели
-    'InstagramPostDownloader',
-    'InstagramReelsDownloader',
-    'YouTubeVideoDownloader',
-    'YouTubeShortsDownloader',
-    'YouTubeCommentService',
-    
+    "InstagramPostDownloader",
+    "InstagramReelsDownloader",
+    "YouTubeVideoDownloader",
+    "YouTubeShortsDownloader",
+    "YouTubeCommentService",
     # Роутер (главный интерфейс)
-    'ContentRouter',
-    
+    "ContentRouter",
     # YouTube grabber
-    'ProductionYouTubeGrabber',
-    
+    "ProductionYouTubeGrabber",
     # ========== LEGACY (старый код) ==========
-    
     # Content Downloader (Модуль 1 - монолитный)
-    'ContentDownloader',
-    'ContentInfo',
-    
+    "ContentDownloader",
+    "ContentInfo",
     # Grabbers
-    'HybridGrabber',
-    
+    "HybridGrabber",
     # Processing
-    'LocalEars',
-    'LocalBrain',
-    'TagManager',
+    "LocalEars",
+    "LocalBrain",
+    "TagManager",
 ]

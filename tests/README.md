@@ -25,31 +25,53 @@ tests/
 
 ## Running Tests
 
-### Install test dependencies:
+### Install development dependencies:
 ```bash
-pip install pytest pytest-mock pytest-cov
+pip install -r requirements.txt -r requirements-dev.txt
 ```
 
 ### Run all tests:
 ```bash
-pytest tests/
+make test
+```
+
+### Run lint:
+```bash
+make lint
+```
+
+### Format code:
+```bash
+make format
 ```
 
 ### Run specific test file:
 ```bash
-pytest tests/test_tag_manager.py
-pytest tests/test_local_ears.py -v
+venv/bin/python3 -m pytest tests/test_tag_manager.py
+venv/bin/python3 -m pytest tests/test_local_ears.py -v
 ```
 
 ### Run with coverage:
 ```bash
-pytest --cov=modules --cov-report=html tests/
+venv/bin/python3 -m pytest --cov=src --cov-report=html tests/
 ```
 
 ### Run with verbose output:
 ```bash
-pytest -v tests/
+venv/bin/python3 -m pytest -v tests/
 ```
+
+### Run type checks (mypy):
+```bash
+make typecheck
+```
+
+### Run full local verification:
+```bash
+make check
+```
+
+Текущий охват: весь проект (`src`, `scripts`, `tests`) и legacy shim-модули совместимости.
 
 ## Test Coverage
 
@@ -83,39 +105,43 @@ pytest -v tests/
 - `sample_tags` - Sample tag list
 - `sample_transcript` - Sample transcription text
 - `sample_description` - Sample content description
-- `mock_ollama_response` - Mock AI response
+- `mock_llama_cpp_response` - Mock AI response
 - `mock_whisper_result` - Mock Whisper transcription result
 
 ## Mocking Strategy
 
 - **WhisperModel**: Mocked with `@patch('modules.local_ears.WhisperModel')`
-- **Ollama**: Mocked with `@patch('modules.local_brain.ollama')`
+- **llama.cpp client**: Mocked at HTTP/client layer in `local_brain`
 - **subprocess.run**: Mocked for downloader tests
 - **File I/O**: Using `tmp_path` fixture for safe file operations
 
 ## CI/CD Integration
 
-Add to `.github/workflows/tests.yml`:
+Repository workflow:
 ```yaml
-name: Tests
-on: [push, pull_request]
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
 jobs:
-  test:
+  checks:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-python@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
-      - run: pip install -r requirements.txt
-      - run: pytest tests/ --cov=modules --cov-report=xml
-      - uses: codecov/codecov-action@v3
+          python-version: '3.12'
+      - run: python -m pip install -r requirements.txt -r requirements-dev.txt
+      - run: python -m ruff check src tests module2_transcribe.py module3_analyze.py scripts
+      - run: python -m mypy --config-file mypy.ini
+      - run: python -m pytest tests -q
 ```
 
 ## Best Practices
 
 ✅ Use fixtures for shared test data  
-✅ Mock external dependencies (Ollama, Whisper, downloaders)  
+✅ Mock external dependencies (llama.cpp, Whisper, downloaders)  
 ✅ Use `tmp_path` for file operations  
 ✅ Test both success and error cases  
 ✅ Use descriptive test names  

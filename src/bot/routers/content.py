@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from fnmatch import fnmatch
 from pathlib import Path
+from typing import AsyncIterator
 from urllib.parse import urlparse
 
 from aiogram import F, Router, types
@@ -23,12 +24,15 @@ logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
-async def typing_action(message: types.Message):
+async def typing_action(message: types.Message) -> AsyncIterator[None]:
     """Показывает статус 'Печатаю...' пока выполняется долгая операция."""
-    async def _keep_typing():
+
+    async def _keep_typing() -> None:
         while True:
             try:
-                await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")
+                bot = message.bot
+                if bot is not None:
+                    await bot.send_chat_action(chat_id=message.chat.id, action="typing")
             except Exception:
                 pass
             await asyncio.sleep(4)
@@ -43,12 +47,28 @@ async def typing_action(message: types.Message):
         except asyncio.CancelledError:
             pass
 
-URL_REGEX = re.compile(r"(https?://[^\s<>()]+|www\.[^\s<>()]+)", re.IGNORECASE)
-DOWNLOAD_SOURCES_PATH = Path(__file__).resolve().parents[1] / "resources" / "download_sources.txt"
 
-YES_ANSWERS = {"да", "yes", "y", "ok", "ок", "окей", "ага", "угу", "конечно", "скачать", "1"}
+URL_REGEX = re.compile(r"(https?://[^\s<>()]+|www\.[^\s<>()]+)", re.IGNORECASE)
+DOWNLOAD_SOURCES_PATH = (
+    Path(__file__).resolve().parents[1] / "resources" / "download_sources.txt"
+)
+
+YES_ANSWERS = {
+    "да",
+    "yes",
+    "y",
+    "ok",
+    "ок",
+    "окей",
+    "ага",
+    "угу",
+    "конечно",
+    "скачать",
+    "1",
+}
 NO_ANSWERS = {"нет", "no", "n", "не", "не надо", "пропустить", "0"}
 FINISH_DIALOG_WORDS = {"готово", "стоп", "хватит", "достаточно", "/done", "завершить"}
+
 
 def get_user_folder(user_id: int, username: str, config: BotConfig) -> Path:
     # Single user mode: folder from USER_NAME env var
@@ -125,7 +145,11 @@ def _is_finish_dialog(text: str) -> bool:
 
 def _build_download_settings() -> DownloadSettings:
     youtube_cookies = Path("cookies.txt") if Path("cookies.txt").exists() else None
-    instagram_cookies = Path("cookies/instagram.json") if Path("cookies/instagram.json").exists() else None
+    instagram_cookies = (
+        Path("cookies/instagram.json")
+        if Path("cookies/instagram.json").exists()
+        else None
+    )
     youtube_cookies_dir = Path("cookies") if Path("cookies").exists() else None
 
     return DownloadSettings(
@@ -145,6 +169,8 @@ def _ollama_chat(
     model = config.ollama_model_complex or config.ollama_model
     brain = LocalBrain(model=model, base_url=config.ollama_url)
     brain.initialize()
+    if brain.client is None:
+        raise RuntimeError("LLM клиент не инициализирован")
 
     response = brain.client.chat(
         model=brain.model,
@@ -167,16 +193,22 @@ def _ollama_chat(
     return result
 
 
-async def _analyze_message_context(text: str, urls: list[str], config: BotConfig) -> str:
+async def _analyze_message_context(
+    text: str, urls: list[str], config: BotConfig
+) -> str:
     system_prompt = (
         "Ты помощник для персональной базы знаний. "
         "Сделай очень короткий анализ сообщения на русском в 2-4 буллетах. "
         "Если есть ссылки, укажи, какую ценность из них можно получить."
     )
-    user_prompt = f"Сообщение:\n{text}\n\nСсылки:\n" + ("\n".join(urls) if urls else "нет")
+    user_prompt = f"Сообщение:\n{text}\n\nСсылки:\n" + (
+        "\n".join(urls) if urls else "нет"
+    )
 
     try:
-        return await asyncio.to_thread(_ollama_chat, config, system_prompt, user_prompt, 0.2, 220)
+        return await asyncio.to_thread(
+            _ollama_chat, config, system_prompt, user_prompt, 0.2, 220
+        )
     except Exception as e:
         logger.warning(f"LLM-анализ недоступен: {e}")
         if urls:
@@ -201,7 +233,9 @@ def _build_base_context_text(data: dict) -> str:
     return "\n".join(lines).strip()
 
 
-async def _generate_expansion_question(config: BotConfig, base_context: str, dialog: list[dict]) -> str:
+async def _generate_expansion_question(
+    config: BotConfig, base_context: str, dialog: list[dict]
+) -> str:
     system_prompt = (
         "Ты интервьюер для раскрытия темы. "
         "Задай ОДИН уточняющий вопрос на русском языке. "
@@ -212,7 +246,9 @@ async def _generate_expansion_question(config: BotConfig, base_context: str, dia
     user_prompt = f"Контекст:\n{base_context}\n\nДиалог:\n{dialog_text if dialog_text else 'пока пусто'}"
 
     try:
-        question = await asyncio.to_thread(_ollama_chat, config, system_prompt, user_prompt, 0.3, 80)
+        question = await asyncio.to_thread(
+            _ollama_chat, config, system_prompt, user_prompt, 0.3, 80
+        )
         return question.strip().split("\n")[0]
     except Exception:
         fallbacks = [
@@ -224,17 +260,23 @@ async def _generate_expansion_question(config: BotConfig, base_context: str, dia
         return fallbacks[min(asked, len(fallbacks) - 1)]
 
 
-async def _generate_expansion_summary(config: BotConfig, base_context: str, dialog: list[dict]) -> str:
+async def _generate_expansion_summary(
+    config: BotConfig, base_context: str, dialog: list[dict]
+) -> str:
     system_prompt = (
         "Ты редактор базы знаний. "
         "Собери краткое саммари на русском в 4-8 буллетов. "
         "Сфокусируйся на фактах, решениях и следующих шагах."
     )
     dialog_text = "\n".join(f"{item['role']}: {item['content']}" for item in dialog)
-    user_prompt = f"Контекст:\n{base_context}\n\nДиалог:\n{dialog_text if dialog_text else 'нет'}"
+    user_prompt = (
+        f"Контекст:\n{base_context}\n\nДиалог:\n{dialog_text if dialog_text else 'нет'}"
+    )
 
     try:
-        return await asyncio.to_thread(_ollama_chat, config, system_prompt, user_prompt, 0.2, 260)
+        return await asyncio.to_thread(
+            _ollama_chat, config, system_prompt, user_prompt, 0.2, 260
+        )
     except Exception:
         answers = [item["content"] for item in dialog if item.get("role") == "user"]
         if not answers:
@@ -266,7 +308,7 @@ async def _save_note(
 
     lines = [
         "---",
-        f"title: \"Telegram note {ts}\"",
+        f'title: "Telegram note {ts}"',
         "source: telegram",
         "type: knowledge",
         f"mode: {mode}",
@@ -331,59 +373,76 @@ async def _ask_post_process_action(message: types.Message) -> None:
     )
 
 
-async def _ask_next_link_decision(message: types.Message, links: list[str], index: int) -> None:
+async def _ask_next_link_decision(
+    message: types.Message, links: list[str], index: int
+) -> None:
     url = links[index]
     await message.answer(
         f"🔗 Ссылка {index + 1}/{len(links)}:\n{url}\n\n"
         "Скачать информацию по этой ссылке? (да/нет)"
     )
 
+
 @router.message(Command("url"))
-async def cmd_url(message: types.Message, state: FSMContext):
+async def cmd_url(message: types.Message, state: FSMContext) -> None:
     """Start URL input flow"""
     await state.set_state(ContentStates.waiting_url)
     await message.answer("🔗 Пришли мне ссылку на YouTube или Instagram:")
 
+
 @router.message(ContentStates.waiting_url)
-@router.message(F.text & F.text.regexp(r'(https?://)?(www\.)?(youtube\.com|youtu\.be|instagram\.com)'))
-async def handle_url(message: types.Message, state: FSMContext, config: BotConfig):
+@router.message(
+    F.text
+    & F.text.regexp(r"(https?://)?(www\.)?(youtube\.com|youtu\.be|instagram\.com)")
+)
+async def handle_url(
+    message: types.Message, state: FSMContext, config: BotConfig
+) -> None:
     """Handle YouTube/Instagram URLs"""
     # If we were waiting for URL, clear state
     current_state = await state.get_state()
     if current_state == ContentStates.waiting_url:
         await state.clear()
-        
-    url = message.text.strip()
+
+    url = (message.text or "").strip()
     status_msg = await message.reply("🔎 Анализирую ссылку...")
-    
+
     try:
-        user_folder = get_user_folder(message.from_user.id, message.from_user.username, config)
-        
+        user = message.from_user
+        if user is None:
+            await status_msg.edit_text("❌ Не удалось определить пользователя.")
+            return
+        user_folder = get_user_folder(user.id, user.username or "", config)
+
         settings = _build_download_settings()
         content_router = ContentRouter(settings, user_folder)
-        
+
         if not content_router.is_supported(url):
             await status_msg.edit_text("❌ URL не поддерживается или не распознан.")
             return
 
         await status_msg.edit_text("⬇️ Начинаю загрузку...")
-        
+
         async with typing_action(message):
             result = await asyncio.to_thread(content_router.download, url)
-        
+        if result.folder_path is None:
+            raise RuntimeError("Контент скачан без целевой папки")
+
         await status_msg.edit_text(
             f"✅ <b>Загрузка завершена!</b>\n\n"
             f"📁 Папка: <code>{result.folder_path.name}</code>\n"
             f"📦 Файлов: {len(result.media_files)}\n\n"
             f"Теперь можно запустить /transcribe или /ai"
         )
-        
+
     except Exception as e:
         await status_msg.edit_text(f"❌ Ошибка загрузки: {str(e)[:200]}")
 
 
 @router.message(ContentStates.waiting_link_download_decision, F.text)
-async def handle_link_download_decision(message: types.Message, state: FSMContext, config: BotConfig):
+async def handle_link_download_decision(
+    message: types.Message, state: FSMContext, config: BotConfig
+) -> None:
     answer = (message.text or "").strip().lower()
     if not (_is_yes(answer) or _is_no(answer)):
         await message.answer("Ответь, пожалуйста: <b>да</b> или <b>нет</b>.")
@@ -409,6 +468,8 @@ async def handle_link_download_decision(message: types.Message, state: FSMContex
             content_router = ContentRouter(_build_download_settings(), user_folder)
             async with typing_action(message):
                 result = await asyncio.to_thread(content_router.download, current_url)
+            if result.folder_path is None:
+                raise RuntimeError("Контент скачан без целевой папки")
             decisions.append(
                 {
                     "url": current_url,
@@ -444,10 +505,14 @@ async def handle_link_download_decision(message: types.Message, state: FSMContex
 
 
 @router.message(ContentStates.waiting_post_process_action, F.text)
-async def handle_post_process_action(message: types.Message, state: FSMContext, config: BotConfig):
+async def handle_post_process_action(
+    message: types.Message, state: FSMContext, config: BotConfig
+) -> None:
     action = _parse_post_action(message.text or "")
     if action is None:
-        await message.answer("Не понял ответ. Напиши <b>положить</b> или <b>раскрыть</b>.")
+        await message.answer(
+            "Не понял ответ. Напиши <b>положить</b> или <b>раскрыть</b>."
+        )
         return
 
     data = await state.get_data()
@@ -466,7 +531,9 @@ async def handle_post_process_action(message: types.Message, state: FSMContext, 
         question = await _generate_expansion_question(config, base_context, dialog)
     dialog.append({"role": "assistant", "content": question})
 
-    await state.update_data(expansion_dialog=dialog, expansion_base_context=base_context)
+    await state.update_data(
+        expansion_dialog=dialog, expansion_base_context=base_context
+    )
     await state.set_state(ContentStates.waiting_topic_expansion_dialog)
     await message.answer(
         "🧠 Отлично, раскрываем тему. Я задам несколько уточняющих вопросов.\n"
@@ -476,7 +543,9 @@ async def handle_post_process_action(message: types.Message, state: FSMContext, 
 
 
 @router.message(ContentStates.waiting_topic_expansion_dialog, F.text)
-async def handle_topic_expansion_dialog(message: types.Message, state: FSMContext, config: BotConfig):
+async def handle_topic_expansion_dialog(
+    message: types.Message, state: FSMContext, config: BotConfig
+) -> None:
     data = await state.get_data()
     dialog: list[dict] = data.get("expansion_dialog", [])
     base_context = data.get("expansion_base_context", "")
@@ -488,8 +557,7 @@ async def handle_topic_expansion_dialog(message: types.Message, state: FSMContex
         await state.update_data(expansion_summary=summary)
         await state.set_state(ContentStates.waiting_expansion_save_confirmation)
         await message.answer(
-            f"📝 Итоговое саммари:\n\n{summary}\n\n"
-            "Положить это в базу знаний? (да/нет)"
+            f"📝 Итоговое саммари:\n\n{summary}\n\nПоложить это в базу знаний? (да/нет)"
         )
         return
 
@@ -515,7 +583,9 @@ async def handle_topic_expansion_dialog(message: types.Message, state: FSMContex
 
 
 @router.message(ContentStates.waiting_expansion_save_confirmation, F.text)
-async def handle_expansion_save_confirmation(message: types.Message, state: FSMContext, config: BotConfig):
+async def handle_expansion_save_confirmation(
+    message: types.Message, state: FSMContext, config: BotConfig
+) -> None:
     answer = (message.text or "").strip().lower()
     if _is_no(answer):
         await state.clear()
@@ -529,21 +599,27 @@ async def handle_expansion_save_confirmation(message: types.Message, state: FSMC
     data = await state.get_data()
     summary = data.get("expansion_summary", "")
     dialog = data.get("expansion_dialog", [])
-    note_path = await _save_note(config, message, data, mode="expanded", summary=summary, dialog=dialog)
+    note_path = await _save_note(
+        config, message, data, mode="expanded", summary=summary, dialog=dialog
+    )
 
     await state.clear()
     await message.answer(
         f"✅ Сохранил раскрытую заметку:\n<code>{note_path.parent.name}/{note_path.name}</code>"
     )
 
+
 @router.message(F.photo | F.video | F.document)
-async def handle_media(message: types.Message, state: FSMContext, config: BotConfig):
+async def handle_media(
+    message: types.Message, state: FSMContext, config: BotConfig
+) -> None:
     """Handle forwarded/direct video, document and photo messages."""
     user_id = message.from_user.id if message.from_user else 0
     username = message.from_user.username if message.from_user else ""
     user_folder = get_user_folder(user_id, username or "", config)
 
     # --- Определяем тип и получаем file_id / имя файла ---
+    media_obj: types.Video | types.Document | types.PhotoSize
     if message.video:
         media_obj = message.video
         media_type = "video"
@@ -571,9 +647,17 @@ async def handle_media(message: types.Message, state: FSMContext, config: BotCon
         origin = message.forward_origin
         # MessageOriginUser / MessageOriginChannel / MessageOriginChat / MessageOriginHiddenUser
         if hasattr(origin, "sender_user") and origin.sender_user:
-            forward_from = f"@{origin.sender_user.username}" if origin.sender_user.username else origin.sender_user.full_name
+            forward_from = (
+                f"@{origin.sender_user.username}"
+                if origin.sender_user.username
+                else origin.sender_user.full_name
+            )
         elif hasattr(origin, "chat") and origin.chat:
-            forward_from = f"@{origin.chat.username}" if origin.chat.username else origin.chat.title
+            forward_from = (
+                f"@{origin.chat.username}"
+                if origin.chat.username
+                else (origin.chat.title or "")
+            )
         elif hasattr(origin, "sender_user_name") and origin.sender_user_name:
             forward_from = origin.sender_user_name
         if hasattr(origin, "date") and origin.date:
@@ -597,7 +681,10 @@ async def handle_media(message: types.Message, state: FSMContext, config: BotCon
 
     try:
         # --- Скачиваем файл через Telegram ---
-        file = await message.bot.get_file(media_obj.file_id)
+        bot = message.bot
+        if bot is None:
+            raise RuntimeError("Bot instance недоступен")
+        file = await bot.get_file(media_obj.file_id)
         ts = datetime.now()
         ts_folder = ts.strftime("%Y-%m-%d_%H-%M")
         ts_iso = ts.strftime("%Y-%m-%d")
@@ -616,17 +703,19 @@ async def handle_media(message: types.Message, state: FSMContext, config: BotCon
 
         # Скачиваем файл (aiogram 3: download_file — async, принимает Path)
         async with typing_action(message):
-            await message.bot.download_file(file.file_path, destination=save_path)
+            if not file.file_path:
+                raise RuntimeError("Telegram не вернул путь к файлу")
+            await bot.download_file(file.file_path, destination=save_path)
 
         # --- Создаём description.md с frontmatter ---
         desc_path = media_dir / "description.md"
         frontmatter_lines = [
             "---",
             f'title: "{caption[:80] or original_name}"',
-            f"author: \"{forward_from or 'unknown'}\"",
+            f'author: "{forward_from or "unknown"}"',
             f"date: {ts_iso}",
-            f"source: telegram",
-            f"type: description",
+            "source: telegram",
+            "type: description",
             f"media_type: {media_type}",
             f"mime: {mime}",
             f"original_file: {original_name}",
@@ -669,12 +758,12 @@ async def handle_media(message: types.Message, state: FSMContext, config: BotCon
 
         file_size_kb = save_path.stat().st_size // 1024 if save_path.exists() else 0
         done_lines = [
-            f"✅ <b>Готово! Вот что было сделано:</b>",
+            "✅ <b>Готово! Вот что было сделано:</b>",
             "",
             f"📁 Папка: <code>{folder_name}</code>",
             f"🎞 Файл сохранён: <code>{save_name}</code> ({file_size_kb} КБ)",
-            f"📄 Создан: <code>description.md</code> с YAML-метаданными",
-            f"🗂 Обновлён wiki-индекс и лог",
+            "📄 Создан: <code>description.md</code> с YAML-метаданными",
+            "🗂 Обновлён wiki-индекс и лог",
         ]
         if forward_from:
             done_lines.append(f"📤 Источник: {forward_from}")
@@ -688,8 +777,11 @@ async def handle_media(message: types.Message, state: FSMContext, config: BotCon
         logger.exception(f"Ошибка сохранения медиа: {e}")
         await status_msg.edit_text(f"❌ Не удалось сохранить медиа: {str(e)[:200]}")
 
+
 @router.message(StateFilter(None), F.text & ~F.text.startswith("/"))
-async def handle_text(message: types.Message, state: FSMContext, config: BotConfig):
+async def handle_text(
+    message: types.Message, state: FSMContext, config: BotConfig
+) -> None:
     """Handle text without command: AI analysis + interactive flow."""
     text = (message.text or "").strip()
     if not text:
@@ -725,7 +817,8 @@ async def handle_text(message: types.Message, state: FSMContext, config: BotConf
             response_parts.append(f"✅ Можно скачать: <b>{len(downloadable_links)}</b>")
         if not_downloadable_links:
             response_parts.append(
-                "⚠️ Пока не поддерживаются:\n" + "\n".join(f"• {url}" for url in not_downloadable_links)
+                "⚠️ Пока не поддерживаются:\n"
+                + "\n".join(f"• {url}" for url in not_downloadable_links)
             )
 
     await status_msg.edit_text("\n\n".join(response_parts))

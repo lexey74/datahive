@@ -3,6 +3,7 @@ LocalEars - Транскрибация видео через HTTP-сервис w
 
 Запросы к DataHive Whisper Service (services/whisper/main.py).
 """
+
 import logging
 import urllib.request
 import urllib.error
@@ -19,8 +20,9 @@ logger = logging.getLogger(__name__)
 @dataclass
 class TranscriptResult:
     """Результат транскрибации"""
+
     timed_transcript: str  # С таймкодами [MM:SS]
-    full_text: str         # Чистый текст
+    full_text: str  # Чистый текст
     language: str = "ru"
     duration: float = 0.0
 
@@ -32,8 +34,9 @@ class LocalEars:
         self,
         whisper_url: str = "",
         whisper_api_key: str = "",
-        **kwargs,  # поглощает устаревшие параметры (model_size, device, и др.)
-    ):
+        **kwargs: object,  # поглощает устаревшие параметры (model_size, device, и др.)
+    ) -> None:
+        del kwargs
         """
         Args:
             whisper_url: Базовый URL whisper-сервиса (напр. https://whisper.inno.co).
@@ -62,7 +65,18 @@ class LocalEars:
         if not media_path or not media_path.exists():
             return None
 
-        valid_extensions = ['.mp4', '.mov', '.avi', '.mkv', '.webm', '.mp3', '.m4a', '.wav', '.flac', '.ogg']
+        valid_extensions = [
+            ".mp4",
+            ".mov",
+            ".avi",
+            ".mkv",
+            ".webm",
+            ".mp3",
+            ".m4a",
+            ".wav",
+            ".flac",
+            ".ogg",
+        ]
         if media_path.suffix.lower() not in valid_extensions:
             logger.info("ℹ️  Это изображение, транскрибация не требуется")
             return None
@@ -88,10 +102,14 @@ class LocalEars:
             file_data = fh.read()
 
         body = (
-            f"--{boundary}\r\n"
-            f'Content-Disposition: form-data; name="file"; filename="{media_path.name}"\r\n'
-            f"Content-Type: {mime_type}\r\n\r\n"
-        ).encode() + file_data + f"\r\n--{boundary}--\r\n".encode()
+            (
+                f"--{boundary}\r\n"
+                f'Content-Disposition: form-data; name="file"; filename="{media_path.name}"\r\n'
+                f"Content-Type: {mime_type}\r\n\r\n"
+            ).encode()
+            + file_data
+            + f"\r\n--{boundary}--\r\n".encode()
+        )
 
         req = urllib.request.Request(
             url,
@@ -109,7 +127,9 @@ class LocalEars:
             detail = exc.read().decode(errors="replace")
             raise RuntimeError(f"Whisper-сервис вернул {exc.code}: {detail}") from exc
         except urllib.error.URLError as exc:
-            raise RuntimeError(f"Не удалось подключиться к whisper-сервису ({url}): {exc.reason}") from exc
+            raise RuntimeError(
+                f"Не удалось подключиться к whisper-сервису ({url}): {exc.reason}"
+            ) from exc
 
         logger.info(
             f"✅ HTTP-транскрибация завершена "
@@ -121,4 +141,3 @@ class LocalEars:
             language=payload.get("language", "ru"),
             duration=float(payload.get("duration", 0.0)),
         )
-

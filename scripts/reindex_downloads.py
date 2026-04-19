@@ -9,6 +9,7 @@
     cd /home/lexey/projects/datahive
     venv/bin/python3 scripts/reindex_downloads.py
 """
+
 from __future__ import annotations
 
 import re
@@ -19,6 +20,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+# ruff: noqa: E402
 from src.modules.wiki_manager import WikiManager
 
 USER_ROOT = ROOT / "users" / "lexey"
@@ -42,7 +44,10 @@ def parse_tags(content: str) -> list[str]:
     #   - ai
     block = re.search(r"^tags:\s*\n((?:\s+- .+\n)*)", content, re.MULTILINE)
     if block:
-        return [re.sub(r"^-\s*#?", "", t).strip() for t in re.findall(r"- (.+)", block.group(1))]
+        return [
+            re.sub(r"^-\s*#?", "", t).strip()
+            for t in re.findall(r"- (.+)", block.group(1))
+        ]
     return []
 
 
@@ -51,7 +56,11 @@ def extract_summary(content: str) -> str:
     m = re.search(r"## 📝 Саммари\n\n(.*?)(?=\n## |\Z)", content, re.DOTALL)
     if not m:
         return ""
-    lines = [l.strip().lstrip("- ").strip() for l in m.group(1).splitlines() if l.strip()]
+    lines = [
+        line.strip().lstrip("- ").strip()
+        for line in m.group(1).splitlines()
+        if line.strip()
+    ]
     return lines[0] if lines else ""
 
 
@@ -76,18 +85,27 @@ def main() -> None:
             source = parse_frontmatter_field(content, "source") or "unknown"
             tags = parse_tags(content)
             summary = extract_summary(content) or title
-            wm.update_index(folder_name=folder.name, summary=summary, tags=tags, source=source)
+            wm.update_index(
+                folder_name=folder.name, summary=summary, tags=tags, source=source
+            )
             print(f"  ✅ {folder.name[:65]}")
         else:
             # Нет Knowledge.md — незавершённая обработка, добавляем как inbox
             desc_path = folder / "description.md"
             source = "unknown"
             summary = folder.name
-            tags: list[str] = ["inbox"]
+            inbox_tags: list[str] = ["inbox"]
 
             # Определяем платформу из имени папки
             name_lower = folder.name.lower()
-            for platform in ("instagram", "youtube", "telegram", "tiktok", "note", "temp"):
+            for platform in (
+                "instagram",
+                "youtube",
+                "telegram",
+                "tiktok",
+                "note",
+                "temp",
+            ):
                 if platform in name_lower:
                     source = platform
                     break
@@ -101,7 +119,7 @@ def main() -> None:
             wm.update_index(
                 folder_name=folder.name,
                 summary=f"[не обработано] {summary[:80]}",
-                tags=tags,
+                tags=inbox_tags,
                 source=source,
             )
             print(f"  📋 {folder.name[:65]}  ← inbox")
@@ -110,7 +128,6 @@ def main() -> None:
 
     print(f"\n✅ Проиндексировано: {ok} папок")
     print(f"📄 index.md: {USER_ROOT / 'index.md'}")
-
 
 
 if __name__ == "__main__":

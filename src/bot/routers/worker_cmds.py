@@ -1,6 +1,9 @@
 import asyncio
+import json
 import logging
 from pathlib import Path
+from urllib import error as url_error
+from urllib import request as url_request
 from aiogram import Router, types, Bot
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -14,10 +17,106 @@ from src.modules.concept_manager import ConceptManager
 router = Router()
 logger = logging.getLogger(__name__)
 
-async def run_transcription(file_path: Path, output_dir: Path, config: BotConfig, message: types.Message):
+
+async def _llama_cpp_health(config: BotConfig) -> tuple[str, str]:
+    """Проверка доступности llama.cpp и выбранной модели."""
+    from src.modules.local_brain import LocalBrain
+
+    def _probe_model() -> None:
+        brain = LocalBrain(model=config.ollama_model, base_url=config.ollama_url)
+        brain.initialize()
+        if brain.client is None:
+            raise RuntimeError("LLM клиент не инициализирован")
+        response = brain.client.chat(
+            model=brain.model,
+            messages=[{"role": "user", "content": "ping"}],
+            options={"temperature": 0.0, "num_predict": 1},
+        )
+        content = response.get("message", {}).get("content", "")
+        if not str(content).strip():
+            raise RuntimeError("модель вернула пустой ответ")
+
+    try:
+        await asyncio.to_thread(_probe_model)
+        return "ok", f"модель {config.ollama_model} доступна"
+    except Exception as e:
+        return "error", str(e)[:180]
+
+
+async def _whisper_health(config: BotConfig) -> tuple[str, str]:
+    """Проверка доступности Whisper HTTP-сервиса."""
+    whisper_url = (config.whisper_url or "").rstrip("/")
+    if not whisper_url:
+        return "not_configured", "WHISPER_URL не задан"
+
+    def _probe_whisper() -> str:
+        endpoint = f"{whisper_url}/health"
+        req = url_request.Request(endpoint, method="GET")
+        with url_request.urlopen(req, timeout=5) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        model = payload.get("model") or "unknown"
+        loaded = payload.get("model_loaded")
+        if loaded is True:
+            return f"модель {model} загружена"
+        if loaded is False:
+            return f"модель {model} не загружена (lazy-load)"
+        return f"модель {model}"
+
+    try:
+        details = await asyncio.to_thread(_probe_whisper)
+        return "ok", details
+    except url_error.HTTPError as e:
+        return "error", f"HTTP {e.code}"[:180]
+    except Exception as e:
+        return "error", str(e)[:180]
+
+
+async def _build_status_text(user_id: int, config: BotConfig) -> str:
+    """Собрать расширенный статус задач и сервисов."""
+    t_status = await queue_store.get_status("transcribe", user_id)
+    ai_status = await queue_store.get_status("ai", user_id)
+    whisper_status, whisper_details = await _whisper_health(config)
+    llm_status, llm_details = await _llama_cpp_health(config)
+
+    status_text = (
+        "📊 <b>Статус задач и сервисов:</b>\n\n"
+        f"🎤 Transcribe: <code>{t_status['status']}</code>\n"
+        f"🤖 AI: <code>{ai_status['status']}</code>\n"
+        f"🗣 Whisper: <code>{whisper_status}</code>\n"
+        f"   └ URL: <code>{config.whisper_url or '-'}</code>\n"
+        f"   └ детали: {whisper_details}\n"
+        f"🧠 llama.cpp: <code>{llm_status}</code>\n"
+        f"   └ модель: <code>{config.ollama_model}</code>\n"
+        f"   └ URL: <code>{config.ollama_url}</code>\n"
+        f"   └ детали: {llm_details}\n"
+    )
+    if t_status["status"] == "queued":
+        status_text += f"   └ позиция в очереди: {t_status.get('position', '?')}\n"
+    if ai_status["status"] == "queued":
+        status_text += f"   └ AI в очереди: {ai_status.get('position', '?')}\n"
+
+    status_text += (
+        "\nℹ️ <b>Легенда:</b> "
+        "<code>ok</code> — сервис отвечает; "
+        "<code>error</code> — сервис недоступен/ошибка; "
+        "<code>not_configured</code> — URL не задан."
+    )
+
+    return status_text
+
+
+async def run_transcription(
+    file_path: Path, output_dir: Path, config: BotConfig, message: types.Message
+) -> None:
     """Запуск транскрибации в executor (не блокирует event loop)"""
-    user_id = message.from_user.id
-    status_msg = await message.answer("🎤 Транскрибирую видео...\nЭто может занять несколько минут.")
+    user = message.from_user
+    if user is None:
+        await message.answer("❌ Не удалось определить пользователя.")
+        return
+    user_id = user.id
+    status_msg = await message.answer(
+        "🎤 Транскрибирую видео...\nЭто может занять несколько минут."
+    )
 
     try:
         ears = LocalEars(
@@ -57,10 +156,16 @@ async def run_transcription(file_path: Path, output_dir: Path, config: BotConfig
 
 
 @router.message(Command("transcribe"))
-async def cmd_transcribe(message: types.Message, state: FSMContext, config: BotConfig):
+async def cmd_transcribe(
+    message: types.Message, state: FSMContext, config: BotConfig
+) -> None:
     """Handler for /transcribe"""
-    user_id = message.from_user.id
-    username = message.from_user.username or ""
+    user = message.from_user
+    if user is None:
+        await message.reply("❌ Не удалось определить пользователя.")
+        return
+    user_id = user.id
+    username = user.username or ""
 
     user_folder = config.users_dir / config.user_name / "downloads"
     if not user_folder.exists():
@@ -83,7 +188,9 @@ async def cmd_transcribe(message: types.Message, state: FSMContext, config: BotC
         + list(latest_folder.glob("*.m4a"))
     )
     if not video_files:
-        await message.reply(f"⚠️ В папке <code>{latest_folder.name}</code> нет медиа для транскрибации.")
+        await message.reply(
+            f"⚠️ В папке <code>{latest_folder.name}</code> нет медиа для транскрибации."
+        )
         return
 
     # Проверяем очередь
@@ -93,13 +200,20 @@ async def cmd_transcribe(message: types.Message, state: FSMContext, config: BotC
         return
 
     await queue_store.set_running("transcribe", user_id)
-    asyncio.create_task(run_transcription(video_files[0], latest_folder, config, message))
+    asyncio.create_task(
+        run_transcription(video_files[0], latest_folder, config, message)
+    )
 
 
 @router.message(Command("ai"))
-async def cmd_ai(message: types.Message, config: BotConfig, bot: Bot):
+async def cmd_ai(message: types.Message, config: BotConfig, bot: Bot) -> None:
+    del bot
     """Handler for /ai — запускает AI анализ через Ollama"""
-    user_id = message.from_user.id
+    user = message.from_user
+    if user is None:
+        await message.reply("❌ Не удалось определить пользователя.")
+        return
+    user_id = user.id
 
     if await queue_store.is_running("ai"):
         await message.reply("⚠️ AI анализ уже запущен.")
@@ -123,7 +237,11 @@ async def cmd_ai(message: types.Message, config: BotConfig, bot: Bot):
 
         latest_folder = folders[0]
         transcript_file = latest_folder / "transcript.md"
-        transcript_text = transcript_file.read_text(encoding="utf-8") if transcript_file.exists() else ""
+        transcript_text = (
+            transcript_file.read_text(encoding="utf-8")
+            if transcript_file.exists()
+            else ""
+        )
 
         await queue_store.set_running("ai", user_id)
 
@@ -143,7 +261,7 @@ async def cmd_ai(message: types.Message, config: BotConfig, bot: Bot):
             knowledge_path = latest_folder / "Knowledge.md"
             tags_yaml = "\n  - ".join(ai_result.get("tags", []))
             knowledge_path.write_text(
-                f"---\ntitle: \"{latest_folder.name}\"\ndate: \"\"\n"
+                f'---\ntitle: "{latest_folder.name}"\ndate: ""\n'
                 f"tags:\n  - {tags_yaml}\nsource: unknown\ntype: knowledge\nprocessed: true\n---\n\n"
                 f"## Саммари\n\n{ai_result.get('summary', '')}\n\n"
                 f"**Категория:** {ai_result.get('category', '')}\n",
@@ -173,12 +291,14 @@ async def cmd_ai(message: types.Message, config: BotConfig, bot: Bot):
                     ollama_model=config.ollama_model,
                     ollama_url=config.ollama_url,
                 )
-                asyncio.create_task(asyncio.to_thread(
-                    cm.update_concepts,
-                    knowledge_path,
-                    latest_folder.name,
-                    ai_result.get("tags", []),
-                ))
+                asyncio.create_task(
+                    asyncio.to_thread(
+                        cm.update_concepts,
+                        knowledge_path,
+                        latest_folder.name,
+                        ai_result.get("tags", []),
+                    )
+                )
             except Exception as wiki_err:
                 logger.warning(f"WikiManager: {wiki_err}")
 
@@ -200,21 +320,28 @@ async def cmd_ai(message: types.Message, config: BotConfig, bot: Bot):
 
 
 @router.message(Command("check"))
-async def cmd_check(message: types.Message, config: BotConfig):
+async def cmd_check(message: types.Message, config: BotConfig) -> None:
     """Handler for /check — статус фоновых задач"""
-    user_id = message.from_user.id
+    user = message.from_user
+    if user is None:
+        await message.reply("❌ Не удалось определить пользователя.")
+        return
+    user_id = user.id
 
-    t_status = await queue_store.get_status("transcribe", user_id)
-    ai_status = await queue_store.get_status("ai", user_id)
+    status_text = await _build_status_text(user_id, config)
+    await message.reply(status_text)
 
-    status_text = (
-        "📊 <b>Статус задач:</b>\n\n"
-        f"🎤 Transcribe: <code>{t_status['status']}</code>\n"
-        f"🤖 AI: <code>{ai_status['status']}</code>\n"
-    )
-    if t_status["status"] == "queued":
-        status_text += f"   └ позиция в очереди: {t_status.get('position', '?')}\n"
 
+@router.message(Command("status"))
+async def cmd_status(message: types.Message, config: BotConfig) -> None:
+    """Handler for /status — детальный статус с health-check llama.cpp"""
+    user = message.from_user
+    if user is None:
+        await message.reply("❌ Не удалось определить пользователя.")
+        return
+    user_id = user.id
+
+    status_text = await _build_status_text(user_id, config)
     await message.reply(status_text)
 
 
@@ -244,8 +371,7 @@ async def cmd_ask(message: types.Message, config: BotConfig) -> None:
 
         if not downloads_dir.exists() or not any(downloads_dir.iterdir()):
             await status_msg.edit_text(
-                "📭 База знаний пуста.\n"
-                "Сначала скачай и обработай контент через /ai."
+                "📭 База знаний пуста.\nСначала скачай и обработай контент через /ai."
             )
             return
 
@@ -266,11 +392,14 @@ async def cmd_ask(message: types.Message, config: BotConfig) -> None:
         # Логируем запрос в wiki log.md
         try:
             from src.modules.wiki_manager import WikiManager
+
             wm = WikiManager(user_root)
             wm.append_log(
                 operation="query",
                 title=question[:80],
-                details=f"Источники: {', '.join(sources[:3])}" if sources else "без источников",
+                details=f"Источники: {', '.join(sources[:3])}"
+                if sources
+                else "без источников",
             )
         except Exception:
             pass
@@ -281,11 +410,7 @@ async def cmd_ask(message: types.Message, config: BotConfig) -> None:
                 f"• <code>{s}</code>" for s in sources[:5]
             )
 
-        response_text = (
-            f"❓ <b>{question}</b>\n\n"
-            f"{answer}"
-            f"{sources_text}"
-        )
+        response_text = f"❓ <b>{question}</b>\n\n{answer}{sources_text}"
 
         await status_msg.edit_text(
             response_text,

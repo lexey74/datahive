@@ -12,13 +12,13 @@ WikiManager — управление персистентной wiki по пат
     concepts/   — тематические страницы (создаются ConceptManager)
     queries/    — сохранённые ответы на вопросы
 """
+
 from __future__ import annotations
 
 import logging
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -118,9 +118,7 @@ class WikiManager:
         else:
             # Добавить новую секцию платформы в конец
             new_section = (
-                f"\n{section_header}\n\n"
-                f"{table_header}\n{table_sep}\n"
-                f"{entry_line}\n"
+                f"\n{section_header}\n\n{table_header}\n{table_sep}\n{entry_line}\n"
             )
             with self.index_path.open("a", encoding="utf-8") as f:
                 f.write(new_section)
@@ -166,7 +164,9 @@ class WikiManager:
 
         details_block = ""
         if details:
-            details_block = "\n".join(f"- {line}" for line in details.strip().split("\n") if line.strip())
+            details_block = "\n".join(
+                f"- {line}" for line in details.strip().split("\n") if line.strip()
+            )
             details_block = "\n" + details_block
 
         entry = f"\n{header}{details_block}\n"
@@ -186,7 +186,7 @@ class WikiManager:
             f"---\ntype: log\ncreated: {today}\n---\n\n"
             "# 📋 Журнал операций\n\n"
             "Append-only хронологическая запись всех операций Data Hive.\n"
-            "Поиск по журналу: `grep \"^## \\[\" log.md | tail -20`\n\n"
+            'Поиск по журналу: `grep "^## \\[" log.md | tail -20`\n\n'
         )
         self.log_path.write_text(content, encoding="utf-8")
 
@@ -207,9 +207,11 @@ class WikiManager:
         filename = f"{date_str}_{time_str}_{slug}.md"
         file_path = self.queries_dir / filename
 
-        sources_md = "\n".join(f"- [[{s}]]" for s in sources) if sources else "_нет источников_"
+        sources_md = (
+            "\n".join(f"- [[{s}]]" for s in sources) if sources else "_нет источников_"
+        )
         content = (
-            f"---\ntype: query\ndate: {date_str}\nquestion: \"{question[:120]}\"\n---\n\n"
+            f'---\ntype: query\ndate: {date_str}\nquestion: "{question[:120]}"\n---\n\n'
             f"# {question}\n\n"
             f"## Ответ\n\n{answer}\n\n"
             f"## Источники\n\n{sources_md}\n"
@@ -255,11 +257,12 @@ class WikiManager:
 
 # ── Утилиты ───────────────────────────────────────────────────────
 
+
 def _strip_markdown(text: str) -> str:
     """Убрать markdown-разметку для читаемого превью."""
     if isinstance(text, list):
         text = " ".join(str(x) for x in text)
-    text = re.sub(r"\[\[([^\]]+)\]\]", r"\1", text)   # [[links]]
+    text = re.sub(r"\[\[([^\]]+)\]\]", r"\1", text)  # [[links]]
     text = re.sub(r"\[([^\]]+)\]\([^\)]+\)", r"\1", text)  # [text](url)
     text = re.sub(r"[*_`#>]", "", text)
     text = re.sub(r"\s+", " ", text).strip()

@@ -4,7 +4,7 @@
 
 ## ✨ Особенности
 
-- 🔒 **100% Privacy**: Только локальные нейросети (Ollama, Whisper)
+- 🔒 **100% Privacy**: Только локальные нейросети (llama.cpp, Whisper)
 - 📦 **Модульная архитектура**: 3 независимых модуля (Download → Transcribe → Analyze)
 - 🎯 **Multi-Source**: Instagram (Posts, Reels) + YouTube (Videos, Shorts)
 - 🏷️ **Smart Tagging**: Автоматическое создание и управление тегами
@@ -34,16 +34,19 @@
   sudo apt install ffmpeg
   ```
 
-### 2. Ollama
+### 2. llama.cpp server
 
-Скачайте и установите [Ollama](https://ollama.ai)
+Нужен OpenAI-совместимый HTTP endpoint llama.cpp. По умолчанию проект ожидает сервер на `http://localhost:8080`.
+
+Пример запуска:
 
 ```bash
-# Запустите сервер
-ollama serve
-
-# В другом терминале загрузите модель
-ollama pull llama3.2
+./server \
+  -m /path/to/model.gguf \
+  --host 0.0.0.0 \
+  --port 8080 \
+  --jinja \
+  --ctx-size 8192
 ```
 
 
@@ -75,13 +78,36 @@ git clone <repo-url>
 cd datahive
 
 # 2. Создайте виртуальное окружение
-python -m venv venv
+python3 -m venv venv
 source venv/bin/activate  # macOS/Linux
 # venv\Scripts\activate   # Windows
 
-# 3. Установите зависимости
-pip install -r requirements.txt
+# 3. Установите runtime и dev-зависимости
+pip install -r requirements.txt -r requirements-dev.txt
 ```
+
+## Developer Checks
+
+Единые команды для локальной проверки:
+
+```bash
+make format
+make lint
+make typecheck
+make test
+make check
+```
+
+Если `make` не используется:
+
+```bash
+venv/bin/python3 -m ruff format src tests module2_transcribe.py module3_analyze.py scripts
+venv/bin/python3 -m ruff check src tests module2_transcribe.py module3_analyze.py scripts
+venv/bin/python3 -m mypy --config-file mypy.ini
+venv/bin/python3 -m pytest tests -q
+```
+
+На GitHub те же проверки выполняются автоматически в workflow `.github/workflows/ci.yml`.
 
 ## 📖 Использование
 
@@ -197,7 +223,7 @@ Check out this amazing AI tool! #ai #productivity
 {
   "output_dir": "SecondBrain_Inbox",
   "whisper_model": "base",
-  "ollama_model": "llama3.2",
+  "llama_cpp_model": "llama3.2",
   "device": "cpu",
   "max_comments": 50,
   "max_tags": 15
@@ -214,7 +240,7 @@ src/
     ├── tag_manager.py         # База тегов (known_tags.json)
     ├── hybrid_grabber.py      # Парсинг (yt-dlp + instagrapi)
     ├── local_ears.py          # Транскрибация (faster-whisper)
-    ├── local_brain.py         # AI анализ (Ollama)
+    ├── local_brain.py         # AI анализ (llama.cpp)
     └── pipeline.py            # Оркестрация процесса
 ```
 
@@ -256,7 +282,12 @@ pytest tests/ --cov=src/modules --cov-report=term-missing
 
 # Verbose output
 pytest tests/ -v
+
+# Type checking (mypy)
+mypy --config-file mypy.ini
 ```
+
+Текущий охват mypy: весь проект (`src`, `scripts`, `tests`) и legacy shim-модули совместимости.
 
 **Test Results**: ✅ 23 tests passing | Coverage: 76-86% on core modules (TagManager, LocalEars)
 

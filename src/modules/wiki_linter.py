@@ -8,6 +8,7 @@ WikiLinter — проверка здоровья wiki по паттерну Karp
   4. Теги без собственной concept-страницы (встречаются в Knowledge.md, но нет wiki/concepts/{tag}.md)
   5. Orphan-страницы в wiki/queries/ без обратных ссылок
 """
+
 from __future__ import annotations
 
 import logging
@@ -26,11 +27,11 @@ class WikiLintResult:
     """Результат lint-прогона."""
 
     def __init__(self) -> None:
-        self.orphan_folders: list[str] = []          # папки не в index.md
-        self.broken_links: list[tuple[str, str]] = [] # (файл, [[link]])
-        self.empty_concepts: list[str] = []           # концепты без синтеза
-        self.unlinked_tags: list[str] = []            # теги без concept-страницы
-        self.orphan_queries: list[str] = []           # queries без источников
+        self.orphan_folders: list[str] = []  # папки не в index.md
+        self.broken_links: list[tuple[str, str]] = []  # (файл, [[link]])
+        self.empty_concepts: list[str] = []  # концепты без синтеза
+        self.unlinked_tags: list[str] = []  # теги без concept-страницы
+        self.orphan_queries: list[str] = []  # queries без источников
 
     @property
     def total_issues(self) -> int:
@@ -44,7 +45,9 @@ class WikiLintResult:
 
     def format_report(self) -> str:
         """Форматированный отчёт для отправки в Telegram."""
-        lines = [f"🔍 <b>Wiki Lint Report</b> — найдено проблем: <b>{self.total_issues}</b>\n"]
+        lines = [
+            f"🔍 <b>Wiki Lint Report</b> — найдено проблем: <b>{self.total_issues}</b>\n"
+        ]
 
         if self.orphan_folders:
             lines.append(f"📂 <b>Осиротевшие папки</b> ({len(self.orphan_folders)}):")
@@ -69,13 +72,17 @@ class WikiLintResult:
             lines.append("")
 
         if self.unlinked_tags:
-            lines.append(f"🏷 <b>Теги без concept-страниц</b> ({len(self.unlinked_tags)}):")
+            lines.append(
+                f"🏷 <b>Теги без concept-страниц</b> ({len(self.unlinked_tags)}):"
+            )
             tags_str = ", ".join(f"<code>{t}</code>" for t in self.unlinked_tags[:12])
             lines.append(f"  {tags_str}")
             lines.append("")
 
         if self.orphan_queries:
-            lines.append(f"❓ <b>Запросы без источников</b> ({len(self.orphan_queries)}):")
+            lines.append(
+                f"❓ <b>Запросы без источников</b> ({len(self.orphan_queries)}):"
+            )
             for q in self.orphan_queries[:5]:
                 lines.append(f"  • <code>{q}</code>")
             lines.append("")
@@ -140,7 +147,9 @@ class WikiLinter:
         # Собираем все валидные имена: папки в downloads/ + файлы в wiki/
         valid_names: set[str] = set()
         if self.downloads_dir.exists():
-            valid_names.update(f.name for f in self.downloads_dir.iterdir() if f.is_dir())
+            valid_names.update(
+                f.name for f in self.downloads_dir.iterdir() if f.is_dir()
+            )
         if self.wiki_dir.exists():
             valid_names.update(f.stem for f in self.wiki_dir.rglob("*.md"))
 
@@ -173,7 +182,9 @@ class WikiLinter:
         for page in self.concepts_dir.glob("*.md"):
             content = self._read_safe(page)
             mentions_val = _parse_frontmatter_field(content, "mentions")
-            mentions_count = int(mentions_val) if mentions_val and mentions_val.isdigit() else 0
+            mentions_count = (
+                int(mentions_val) if mentions_val and mentions_val.isdigit() else 0
+            )
             has_template_synthesis = "_Накапливается автоматически" in content
 
             # Если есть упоминания или нет шаблонного синтеза — не считать пустым
@@ -205,7 +216,9 @@ class WikiLinter:
         for knowledge_md in self.downloads_dir.rglob("Knowledge.md"):
             content = self._read_safe(knowledge_md)
             # Формат 1: tags:\n  - tag_name  (YAML-список)
-            tags_block = re.search(r"^tags:\s*\n((?:\s+- .+\n)*)", content, re.MULTILINE)
+            tags_block = re.search(
+                r"^tags:\s*\n((?:\s+- .+\n)*)", content, re.MULTILINE
+            )
             if tags_block:
                 tags = re.findall(r"- (.+)", tags_block.group(1))
                 all_tags.update(t.strip() for t in tags if t.strip() not in ("inbox",))
@@ -252,6 +265,7 @@ class WikiLinter:
 
 
 # ── Текстовые утилиты ─────────────────────────────────────────────
+
 
 def _parse_frontmatter_field(content: str, field: str) -> str | None:
     pattern = re.compile(rf"^{field}:\s*(.+)$", re.MULTILINE)

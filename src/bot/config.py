@@ -1,14 +1,14 @@
 from pathlib import Path
 from typing import Optional
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
 
 class BotConfig(BaseSettings):
     """Configuration for Data Hive Bot"""
+
     model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
-        extra="ignore"
+        env_file=".env", env_file_encoding="utf-8", extra="ignore"
     )
 
     # Telegram
@@ -24,10 +24,21 @@ class BotConfig(BaseSettings):
     whisper_url: str = Field("", alias="WHISPER_URL")
     whisper_api_key: str = Field("", alias="WHISPER_API_KEY")
 
-    # Ollama
-    ollama_url: str = Field("http://localhost:11434", alias="OLLAMA_HOST")
-    ollama_model: str = Field("llama3.2", alias="OLLAMA_MODEL")
-    ollama_model_complex: str = Field("qwen3:4b", alias="OLLAMA_MODEL_COMPLEX")
+    # Llama.cpp (с обратной совместимостью по старым env)
+    ollama_url: str = Field(
+        "http://localhost:8080",
+        validation_alias=AliasChoices("LLAMA_CPP_URL", "OLLAMA_HOST"),
+    )
+    ollama_model: str = Field(
+        "llama3.2",
+        validation_alias=AliasChoices("LLAMA_CPP_MODEL", "OLLAMA_MODEL"),
+    )
+    ollama_model_complex: str = Field(
+        "qwen3:4b",
+        validation_alias=AliasChoices(
+            "LLAMA_CPP_MODEL_COMPLEX", "OLLAMA_MODEL_COMPLEX"
+        ),
+    )
 
     # Webhook
     webhook_mode: bool = Field(False, alias="WEBHOOK_MODE")
@@ -43,6 +54,6 @@ class BotConfig(BaseSettings):
     transcribe_pid: Path = Path("logs/transcribe.pid")
     ai_pid: Path = Path("logs/ai.pid")
 
-    def model_post_init(self, __context):
+    def model_post_init(self, __context: object) -> None:
         # Ensure directories exist
         self.transcribe_log.parent.mkdir(parents=True, exist_ok=True)

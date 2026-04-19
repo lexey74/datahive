@@ -9,6 +9,7 @@
     cd /home/lexey/projects/datahive
     venv/bin/python3 scripts/analyze_missing.py
 """
+
 from __future__ import annotations
 
 import re
@@ -19,6 +20,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+# ruff: noqa: E402
 from src.modules.local_brain import LocalBrain
 from src.modules.tag_manager import TagManager
 from src.modules.wiki_manager import WikiManager
@@ -26,11 +28,12 @@ from src.modules.wiki_manager import WikiManager
 USER_ROOT = ROOT / "users" / "lexey"
 DOWNLOADS_DIR = USER_ROOT / "downloads"
 
-OLLAMA_URL = "http://localhost:11434"
-OLLAMA_MODEL = "qwen3:4b"
+LLAMA_CPP_URL = "http://localhost:8080"
+LLAMA_CPP_MODEL = "qwen3:4b"
 
 
 # ── Утилиты чтения ────────────────────────────────────────────────
+
 
 def read_description(folder: Path) -> tuple[str, str, str]:
     """Вернуть (caption, author, source) из description.md или caption.md."""
@@ -60,7 +63,7 @@ def read_description(folder: Path) -> tuple[str, str, str]:
         for header in ("## Описание", "# Caption", "# Заметка"):
             idx = text.find(header)
             if idx != -1:
-                caption = text[idx + len(header):].strip()
+                caption = text[idx + len(header) :].strip()
                 break
         if not caption:
             # Fallback: весь текст без frontmatter
@@ -92,6 +95,7 @@ def extract_date(folder_name: str) -> str:
 
 # ── Генерация Knowledge.md ────────────────────────────────────────
 
+
 def write_knowledge(folder: Path, ai_result: dict, source: str, author: str) -> Path:
     tags_yaml = "\n  - ".join(ai_result.get("tags", ["inbox"]))
     date = extract_date(folder.name)
@@ -109,6 +113,7 @@ def write_knowledge(folder: Path, ai_result: dict, source: str, author: str) -> 
 
 # ── Основной цикл ─────────────────────────────────────────────────
 
+
 def main() -> None:
     if not DOWNLOADS_DIR.exists():
         print(f"❌ downloads/ не найден: {DOWNLOADS_DIR}")
@@ -116,7 +121,8 @@ def main() -> None:
 
     # Находим папки без Knowledge.md
     missing = sorted(
-        f for f in DOWNLOADS_DIR.iterdir()
+        f
+        for f in DOWNLOADS_DIR.iterdir()
         if f.is_dir() and not (f / "Knowledge.md").exists()
     )
 
@@ -126,17 +132,17 @@ def main() -> None:
 
     print(f"📂 Папок без Knowledge.md: {len(missing)}\n")
 
-    brain = LocalBrain(model=OLLAMA_MODEL, base_url=OLLAMA_URL)
+    brain = LocalBrain(model=LLAMA_CPP_MODEL, base_url=LLAMA_CPP_URL)
     tag_manager = TagManager()
     wm = WikiManager(USER_ROOT)
 
-    # Проверим Ollama
-    print(f"🔌 Подключение к Ollama ({OLLAMA_URL})...")
+    # Проверим llama.cpp
+    print(f"🔌 Подключение к llama.cpp ({LLAMA_CPP_URL})...")
     try:
         brain.initialize()
-        print("✅ Ollama доступен\n")
+        print("✅ llama.cpp доступен\n")
     except Exception as e:
-        print(f"❌ Ollama недоступен: {e}")
+        print(f"❌ llama.cpp недоступен: {e}")
         sys.exit(1)
 
     ok = 0
@@ -149,7 +155,7 @@ def main() -> None:
         transcript = read_transcript(folder)
 
         if not caption and not transcript:
-            print(f"   ⚠️  Нет контента для анализа — пропускаем\n")
+            print("   ⚠️  Нет контента для анализа — пропускаем\n")
             errors += 1
             continue
 
@@ -167,11 +173,11 @@ def main() -> None:
             continue
 
         if not ai_result:
-            print(f"   ❌ LLM вернул None\n")
+            print("   ❌ LLM вернул None\n")
             errors += 1
             continue
 
-        knowledge_path = write_knowledge(folder, ai_result, source, author)
+        write_knowledge(folder, ai_result, source, author)
         tags_str = ", ".join(ai_result.get("tags", [])[:5])
         print(f"   ✅ Knowledge.md создан | теги: {tags_str}")
 
@@ -195,10 +201,10 @@ def main() -> None:
         print()
         ok += 1
 
-    print(f"{'─'*60}")
+    print(f"{'─' * 60}")
     print(f"✅ Обработано: {ok}  |  ❌ Ошибок: {errors}")
     if ok > 0:
-        print(f"📄 Теперь запустите reindex_downloads.py для полной индексации")
+        print("📄 Теперь запустите reindex_downloads.py для полной индексации")
 
 
 if __name__ == "__main__":

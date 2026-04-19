@@ -8,6 +8,7 @@ wiki_cmds.py — команды для управления LLM Wiki в боте
 
 Inline-кнопка [💾 Сохранить в wiki] добавляется к ответам /ask через callback.
 """
+
 import asyncio
 import logging
 from pathlib import Path
@@ -15,7 +16,6 @@ from pathlib import Path
 from aiogram import Router, types, F
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from aiogram.fsm.context import FSMContext
 
 from src.bot.config import BotConfig
 from src.modules.wiki_manager import WikiManager
@@ -37,15 +37,20 @@ def _get_user_root(config: BotConfig, user_id: int | None = None) -> Path:
 
 def save_answer_keyboard(user_id: int) -> InlineKeyboardMarkup:
     """Inline-клавиатура с кнопкой сохранения ответа в wiki."""
-    return InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(
-            text="💾 Сохранить в wiki",
-            callback_data=f"save_answer:{user_id}"
-        )
-    ]])
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="💾 Сохранить в wiki", callback_data=f"save_answer:{user_id}"
+                )
+            ]
+        ]
+    )
 
 
-def register_answer(user_id: int, question: str, answer: str, sources: list[str]) -> None:
+def register_answer(
+    user_id: int, question: str, answer: str, sources: list[str]
+) -> None:
     """Зарегистрировать ответ для последующего сохранения через inline-кнопку."""
     _last_answers[user_id] = {
         "question": question,
@@ -56,10 +61,13 @@ def register_answer(user_id: int, question: str, answer: str, sources: list[str]
 
 # ── /wiki — статистика ────────────────────────────────────────────
 
+
 @router.message(Command("wiki"))
 async def cmd_wiki(message: types.Message, config: BotConfig) -> None:
     """Статистика wiki пользователя."""
-    user_root = _get_user_root(config, message.from_user.id if message.from_user else None)
+    user_root = _get_user_root(
+        config, message.from_user.id if message.from_user else None
+    )
     wm = WikiManager(user_root)
 
     await message.answer("📊 Собираю статистику wiki...")
@@ -80,10 +88,13 @@ async def cmd_wiki(message: types.Message, config: BotConfig) -> None:
 
 # ── /lint — проверка здоровья ─────────────────────────────────────
 
+
 @router.message(Command("lint"))
 async def cmd_lint(message: types.Message, config: BotConfig) -> None:
     """Проверка здоровья wiki."""
-    user_root = _get_user_root(config, message.from_user.id if message.from_user else None)
+    user_root = _get_user_root(
+        config, message.from_user.id if message.from_user else None
+    )
 
     status_msg = await message.answer("🔍 Запускаю wiki lint...")
 
@@ -116,6 +127,7 @@ async def cmd_lint(message: types.Message, config: BotConfig) -> None:
 
 
 # ── /save — сохранить последний ответ вручную ─────────────────────
+
 
 @router.message(Command("save"))
 async def cmd_save(message: types.Message, config: BotConfig) -> None:
@@ -152,15 +164,21 @@ async def cmd_save(message: types.Message, config: BotConfig) -> None:
 
 # ── Callback: inline-кнопка "Сохранить в wiki" ────────────────────
 
+
 @router.callback_query(F.data.startswith("save_answer:"))
 async def cb_save_answer(callback: types.CallbackQuery, config: BotConfig) -> None:
     """Обработчик нажатия кнопки '💾 Сохранить в wiki'."""
     await callback.answer()
+    if not callback.data:
+        return
+    message = callback.message
+    if not isinstance(message, types.Message):
+        return
     user_id = int(callback.data.split(":")[1])
     data = _last_answers.get(user_id)
 
     if not data:
-        await callback.message.answer("⚠️ Ответ уже сохранён или устарел.")
+        await message.answer("⚠️ Ответ уже сохранён или устарел.")
         return
 
     user_root = _get_user_root(config, user_id)
@@ -176,21 +194,24 @@ async def cb_save_answer(callback: types.CallbackQuery, config: BotConfig) -> No
         del _last_answers[user_id]
 
         # Редактируем сообщение: убираем кнопку, добавляем подтверждение
-        original_text = callback.message.text or ""
-        await callback.message.edit_text(
+        original_text = message.text or ""
+        await message.edit_text(
             original_text + f"\n\n✅ <i>Сохранено: <code>{file_path.name}</code></i>",
             reply_markup=None,
         )
     except Exception as e:
-        await callback.message.answer(f"❌ Ошибка сохранения: {str(e)[:200]}")
+        await message.answer(f"❌ Ошибка сохранения: {str(e)[:200]}")
 
 
 # ── /concepts — список концептов ──────────────────────────────────
 
+
 @router.message(Command("concepts"))
 async def cmd_concepts(message: types.Message, config: BotConfig) -> None:
     """Показать топ концепт-страниц по количеству упоминаний."""
-    user_root = _get_user_root(config, message.from_user.id if message.from_user else None)
+    user_root = _get_user_root(
+        config, message.from_user.id if message.from_user else None
+    )
     cm = ConceptManager(
         concepts_dir=user_root / "wiki" / "concepts",
         ollama_model=config.ollama_model,

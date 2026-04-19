@@ -1,10 +1,11 @@
 """
 Pipeline - Оркестрация всего процесса обработки контента (Data Hive)
 """
+
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional, Union, TYPE_CHECKING
+from typing import Any, Optional, TYPE_CHECKING
 from datetime import datetime
 import re
 import logging
@@ -35,32 +36,34 @@ class DataHivePipeline:
 
         self.tag_manager = TagManager()
         self.grabber = HybridGrabber(
-            output_dir=Path(config['temp_dir']),
-            cookies_file=Path(config.get('cookies_file', 'cookies.txt'))
+            output_dir=Path(config["temp_dir"]),
+            cookies_file=Path(config.get("cookies_file", "cookies.txt")),
         )
         self.ears = LocalEars(
-            whisper_url=config.get('whisper_url', ''),
-            whisper_api_key=config.get('whisper_api_key', ''),
+            whisper_url=config.get("whisper_url", ""),
+            whisper_api_key=config.get("whisper_api_key", ""),
         )
         self.brain = LocalBrain(
-            model=config.get('ollama_model', 'llama3.2'),
-            base_url=config.get('ollama_url', 'http://localhost:11434'),
+            model=config.get("ollama_model", "llama3.2"),
+            base_url=config.get("ollama_url", "http://localhost:8080"),
         )
 
-        if config.get('num_threads'):
-            self.brain.num_threads = config['num_threads']
-        if config.get('num_ctx'):
-            self.brain.num_ctx = config['num_ctx']
+        if config.get("num_threads"):
+            self.brain.num_threads = config["num_threads"]
+        if config.get("num_ctx"):
+            self.brain.num_ctx = config["num_ctx"]
 
         # WikiManager — user_root задаётся позже через process()
         self.wiki_manager: Optional[WikiManager] = None
 
-        session_file = Path(config.get('session_file', 'session.json'))
+        session_file = Path(config.get("session_file", "session.json"))
         if session_file.exists():
             self.grabber.setup_instagrapi(session_file)
 
     @classmethod
-    def from_bot_config(cls, bot_config: "BotConfig", output_dir: Path, user_root: Optional[Path] = None) -> "DataHivePipeline":
+    def from_bot_config(
+        cls, bot_config: "BotConfig", output_dir: Path, user_root: Optional[Path] = None
+    ) -> "DataHivePipeline":
         """
         Создать пайплайн из BotConfig (aiogram-бот).
 
@@ -80,14 +83,14 @@ class DataHivePipeline:
         if user_root:
             pipeline.wiki_manager = WikiManager(user_root)
         return pipeline
-    
+
     def process(self, url: str) -> Optional[Path]:
         """
         Полный цикл обработки Instagram URL
-        
+
         Args:
             url: URL Instagram поста/рилса
-            
+
         Returns:
             Путь к созданной заметке или None
         """
@@ -103,7 +106,9 @@ class DataHivePipeline:
 
         # Шаг 2: Транскрибация (если видео)
         transcript_result = self.ears.transcribe(content.media_path)
-        transcript_text = transcript_result.timed_transcript if transcript_result else ""
+        transcript_text = (
+            transcript_result.timed_transcript if transcript_result else ""
+        )
         full_text = transcript_result.full_text if transcript_result else ""
 
         # Шаг 3: AI анализ
@@ -114,7 +119,7 @@ class DataHivePipeline:
             transcript=transcript_text,
             comments=content.comments,
             author=content.author,
-            known_tags=known_tags_string
+            known_tags=known_tags_string,
         )
 
         if not ai_result:
@@ -122,7 +127,7 @@ class DataHivePipeline:
             return None
 
         # Шаг 4: Обновление тегов
-        new_tags = ai_result.get('tags', [])
+        new_tags = ai_result.get("tags", [])
         added_count = self.tag_manager.add_tags(new_tags)
         if added_count > 0:
             logger.info(f"✅ Добавлено новых тегов: {added_count}")
@@ -134,7 +139,7 @@ class DataHivePipeline:
                 content=content,
                 ai_result=ai_result,
                 transcript_text=transcript_text,
-                full_text=full_text
+                full_text=full_text,
             )
             logger.info("✅ Заметка создана")
         except Exception as e:
@@ -147,16 +152,16 @@ class DataHivePipeline:
         if self.wiki_manager:
             try:
                 folder_name = note_path.parent.name
-                source = getattr(content, 'platform', 'unknown') or 'unknown'
-                tags = ai_result.get('tags', [])
-                summary = ai_result.get('summary', '')
+                source = getattr(content, "platform", "unknown") or "unknown"
+                tags = ai_result.get("tags", [])
+                summary = ai_result.get("summary", "")
 
                 self.wiki_manager.update_index(
                     folder_name=folder_name,
                     summary=summary,
                     tags=tags,
                     source=source,
-                    url=getattr(content, 'url', ''),
+                    url=getattr(content, "url", ""),
                 )
                 self.wiki_manager.append_log(
                     operation="ingest",
@@ -168,82 +173,84 @@ class DataHivePipeline:
                 logger.warning(f"⚠️ WikiManager ошибка: {e}")
 
         return note_path
-    
+
     def _create_note_bundle(
         self,
-        content,
-        ai_result: dict,
+        content: Any,
+        ai_result: dict[str, Any],
         transcript_text: str,
-        full_text: str
+        full_text: str,
     ) -> Path:
         """
         Создание Asset Bundle (папка + Knowledge.md + медиа)
-        
+
         Args:
             content: InstagramContent
             ai_result: Результат AI анализа
             transcript_text: Транскрипт с таймкодами
             full_text: Чистый текст транскрипта
-            
+
         Returns:
             Путь к Knowledge.md
         """
         # Формирование имени папки
         date_str = content.date or datetime.now().strftime("%Y-%m-%d")
         author = self._sanitize_filename(content.author or "unknown")
-        slug = self._generate_slug(ai_result.get('summary', 'note'))
-        
+        slug = self._generate_slug(ai_result.get("summary", "note"))
+
         bundle_name = f"{date_str}_{author}_{slug}"
-        bundle_path = Path(self.config['output_dir']) / bundle_name
+        bundle_path = Path(self.config["output_dir"]) / bundle_name
         bundle_path.mkdir(parents=True, exist_ok=True)
-        
+
         # Перемещение медиа в bundle
         media_ext = ".jpg"  # default
         if content.media_path and content.media_path.exists():
             media_ext = content.media_path.suffix
             media_dest = bundle_path / f"media{media_ext}"
             content.media_path.rename(media_dest)
-        
+
         # Генерация Knowledge.md
         note_content = self._generate_markdown(
             content=content,
             ai_result=ai_result,
             transcript_text=transcript_text,
             full_text=full_text,
-            media_filename=f"media{media_ext}"
+            media_filename=f"media{media_ext}",
         )
-        
+
         note_path = bundle_path / "Knowledge.md"
-        note_path.write_text(note_content, encoding='utf-8')
-        
+        note_path.write_text(note_content, encoding="utf-8")
+
         return note_path
-    
+
     def _generate_markdown(
         self,
-        content,
-        ai_result: dict,
+        content: Any,
+        ai_result: dict[str, Any],
         transcript_text: str,
         full_text: str,
-        media_filename: str
+        media_filename: str,
     ) -> str:
         """Генерация Markdown заметки по шаблону"""
-        
-        tags_yaml = "\n".join(f"  - {tag}" for tag in ai_result.get('tags', []))
+
+        tags_yaml = "\n".join(f"  - {tag}" for tag in ai_result.get("tags", []))
         tags_yaml += "\n  - inbox"
-        
+
         # Форматирование комментариев
         comments_md = ""
-        for comment in ai_result.get('valuable_comments', []):
+        for comment in ai_result.get("valuable_comments", []):
             comments_md += f"> {comment}\n\n"
-        
+
         # Генерация заголовка
-        title = f"{content.author}: {self._generate_slug(ai_result.get('summary', 'Note'))}"
-        
+        title = (
+            f"{content.author}: {self._generate_slug(ai_result.get('summary', 'Note'))}"
+        )
+
         template = f"""---
 created: {content.date or datetime.now().strftime("%Y-%m-%d")}
 author: {content.author}
 url: {content.url}
-category: {ai_result.get('category', 'Other')}
+category: {ai_result.get("category", "Other")}
 tags:
 {tags_yaml}
 ---
@@ -253,30 +260,30 @@ tags:
 ![[{media_filename}]]
 
 ## 🧠 AI Summary
-{ai_result.get('summary', 'No summary available')}
+{ai_result.get("summary", "No summary available")}
 
 ## 💬 Valuable Insights (Comments)
-{comments_md if comments_md else '_No valuable comments found_'}
+{comments_md if comments_md else "_No valuable comments found_"}
 
 ---
 <details>
 <summary>📂 Raw Data (Transcript & Caption)</summary>
 
 ### Caption
-{content.caption if content.caption else '_No caption_'}
+{content.caption if content.caption else "_No caption_"}
 
 ### Transcript
-{transcript_text if transcript_text else '_No transcript (image or transcription failed)_'}
+{transcript_text if transcript_text else "_No transcript (image or transcription failed)_"}
 </details>
 """
         return template
-    
+
     def _sanitize_filename(self, text: str) -> str:
         """Очистка текста для использования в имени файла"""
-        text = re.sub(r'[^\w\s-]', '', text)
-        text = re.sub(r'[-\s]+', '_', text)
+        text = re.sub(r"[^\w\s-]", "", text)
+        text = re.sub(r"[-\s]+", "_", text)
         return text[:30].lower()
-    
+
     def _generate_slug(self, text: str) -> str:
         """Генерация короткого slug из текста"""
         # Если это список, берём первый элемент
@@ -285,7 +292,7 @@ tags:
         # Если не строка, конвертируем
         if not isinstance(text, str):
             text = str(text)
-        
+
         words = text.split()[:4]
         slug = "_".join(words)
         return self._sanitize_filename(slug)

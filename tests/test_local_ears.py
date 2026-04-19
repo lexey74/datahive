@@ -4,6 +4,7 @@ Unit Tests for LocalEars (Whisper Transcription via HTTP)
 
 Тесты для модуля транскрибации через whisper-сервис (HTTP-режим).
 """
+
 import json
 import pytest
 from unittest.mock import patch, MagicMock
@@ -84,7 +85,7 @@ class TestLocalEars:
         captured_req = {}
 
         def fake_urlopen(req, timeout=None):
-            captured_req['headers'] = dict(req.headers)
+            captured_req["headers"] = dict(req.headers)
             mock_resp = MagicMock()
             mock_resp.__enter__ = lambda s: s
             mock_resp.__exit__ = MagicMock(return_value=False)
@@ -95,11 +96,12 @@ class TestLocalEars:
             ears = LocalEars(whisper_url=WHISPER_URL, whisper_api_key=API_KEY)
             ears.transcribe(audio)
 
-        assert captured_req['headers'].get('Authorization') == f"Bearer {API_KEY}"
+        assert captured_req["headers"].get("Authorization") == f"Bearer {API_KEY}"
 
     def test_transcribe_remote_http_error(self, tmp_path):
         """HTTP-ошибка от сервиса пробрасывается как RuntimeError"""
         import urllib.error
+
         audio = tmp_path / "test.mp3"
         audio.write_bytes(b"fake audio")
 
@@ -119,11 +121,13 @@ class TestLocalEars:
     def test_transcribe_remote_connection_error(self, tmp_path):
         """Недоступность сервиса пробрасывается как RuntimeError"""
         import urllib.error
+
         audio = tmp_path / "test.mp3"
         audio.write_bytes(b"fake audio")
 
-        with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("refused")):
+        with patch(
+            "urllib.request.urlopen", side_effect=urllib.error.URLError("refused")
+        ):
             ears = LocalEars(whisper_url=WHISPER_URL)
             with pytest.raises(RuntimeError, match="Не удалось подключиться"):
                 ears.transcribe(audio)
-

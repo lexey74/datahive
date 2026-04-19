@@ -7,16 +7,17 @@ running semantic search + answer generation via LocalBrain.
 This module is optional: if chromadb/sentence-transformers are not installed
 the code will raise ImportError with a friendly message.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
-from typing import List, Dict, Optional
+from typing import Any, List, Dict, Optional
 import os
 import hashlib
 
 
 def _hash_text(text: str) -> str:
-    return hashlib.sha256(text.encode('utf-8')).hexdigest()
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 class RAGEngine:
@@ -42,16 +43,16 @@ class RAGEngine:
         self.EmbedModel = SentenceTransformer
         self.TextSplitter = RecursiveCharacterTextSplitter
 
-        self.embedding_model_name = os.getenv('RAG_EMBEDDING_MODEL', 'all-MiniLM-L6-v2')
-        self.top_k = int(os.getenv('RAG_SEARCH_TOP_K', '5'))
+        self.embedding_model_name = os.getenv("RAG_EMBEDDING_MODEL", "all-MiniLM-L6-v2")
+        self.top_k = int(os.getenv("RAG_SEARCH_TOP_K", "5"))
 
         # user_root is the downloads/{userfolder}
         self.user_root = Path(user_root) if user_root else None
 
         # client will be lazily created
-        self._client = None
-        self._collection = None
-        self._embedder = None
+        self._client: Optional[Any] = None
+        self._collection: Optional[Any] = None
+        self._embedder: Optional[Any] = None
 
     def _init_client(self) -> None:
         if self._client is None:
@@ -59,13 +60,13 @@ class RAGEngine:
             if not self.user_root:
                 raise ValueError("user_root must be provided to initialize RAGEngine")
 
-            vector_path = self.user_root / 'vector_db'
+            vector_path = self.user_root / "vector_db"
             vector_path.mkdir(parents=True, exist_ok=True)
 
             # Persistent client pointing to per-user folder
             self._client = self.chromadb.PersistentClient(path=str(vector_path))
             # single collection for all user docs
-            self._collection = self._client.get_or_create_collection(name='datahive')
+            self._collection = self._client.get_or_create_collection(name="datahive")
 
         if self._embedder is None:
             # load sentence-transformers model (CPU)
@@ -83,17 +84,17 @@ class RAGEngine:
                 # New structure: users/{username}/downloads/
                 # We check if we are at 'downloads' folder and if its grandparent is 'users'
                 # But careful with path boundaries.
-                if p.name == 'downloads':
+                if p.name == "downloads":
                     # Check if grandparent name is 'users' (approximate check)
                     try:
-                         if p.parent.parent.name == 'users':
-                             self.user_root = p
-                             break
+                        if p.parent.parent.name == "users":
+                            self.user_root = p
+                            break
                     except Exception:
                         pass
-                
+
                 # Compatibility logic
-                if p.name and (p.parent.name == 'downloads' or '_' in p.name):
+                if p.name and (p.parent.name == "downloads" or "_" in p.name):
                     # choose the first ancestor under downloads or containing '_'
                     self.user_root = p
                     break
@@ -113,14 +114,14 @@ class RAGEngine:
         for fname in priority_files:
             fpath = folder / fname
             if fpath.exists() and fpath.is_file():
-                content = fpath.read_text(encoding='utf-8')
-                source_type = 'unknown'
-                if fname == 'Knowledge.md':
-                    source_type = 'summary'
-                elif fname == 'description.md':
-                    source_type = 'description'
-                elif fname == 'transcript.md':
-                    source_type = 'transcript'
+                content = fpath.read_text(encoding="utf-8")
+                source_type = "unknown"
+                if fname == "Knowledge.md":
+                    source_type = "summary"
+                elif fname == "description.md":
+                    source_type = "description"
+                elif fname == "transcript.md":
+                    source_type = "transcript"
 
                 # Split into chunks
                 splitter = self.TextSplitter(chunk_size=1000, chunk_overlap=150)
@@ -128,11 +129,13 @@ class RAGEngine:
                 for idx, chunk in enumerate(chunks):
                     chunk_id = _hash_text(f"{fname}:{idx}:{chunk[:64]}")
                     texts.append(chunk)
-                    metadatas.append({
-                        'folder_name': folder.name,
-                        'file_path': str(fpath),
-                        'source_type': source_type,
-                    })
+                    metadatas.append(
+                        {
+                            "folder_name": folder.name,
+                            "file_path": str(fpath),
+                            "source_type": source_type,
+                        }
+                    )
                     ids.append(chunk_id)
 
         if not texts:
@@ -140,18 +143,26 @@ class RAGEngine:
 
         # compute embeddings
         self._init_client()
+        if self._embedder is None or self._collection is None:
+            raise RuntimeError("RAG engine не инициализирован")
         embeddings = self._embedder.encode(texts, show_progress_bar=False)
 
         # Upsert into collection (use add/upsert depending on API)
         try:
             # prefer upsert if available
-            if hasattr(self._collection, 'upsert'):
-                self._collection.upsert(ids=ids, documents=texts, metadatas=metadatas, embeddings=embeddings)
+            if hasattr(self._collection, "upsert"):
+                self._collection.upsert(
+                    ids=ids, documents=texts, metadatas=metadatas, embeddings=embeddings
+                )
             else:
-                self._collection.add(ids=ids, documents=texts, metadatas=metadatas, embeddings=embeddings)
+                self._collection.add(
+                    ids=ids, documents=texts, metadatas=metadatas, embeddings=embeddings
+                )
         except Exception:
             # best-effort add
-            self._collection.add(ids=ids, documents=texts, metadatas=metadatas, embeddings=embeddings)
+            self._collection.add(
+                ids=ids, documents=texts, metadatas=metadatas, embeddings=embeddings
+            )
 
         return len(texts)
 
@@ -164,39 +175,50 @@ class RAGEngine:
             raise ValueError("user_root must be set for query()")
 
         self._init_client()
+        if self._embedder is None or self._collection is None:
+            raise RuntimeError("RAG engine не инициализирован")
         # embed query
         q_emb = self._embedder.encode([question])[0]
 
         # query collection
         try:
-            results = self._collection.query(query_embeddings=[q_emb], n_results=self.top_k, include=['documents', 'metadatas'])
+            results = self._collection.query(
+                query_embeddings=[q_emb],
+                n_results=self.top_k,
+                include=["documents", "metadatas"],
+            )
         except TypeError:
             # fallback to text query
-            results = self._collection.query(query_texts=[question], n_results=self.top_k, include=['documents', 'metadatas'])
+            results = self._collection.query(
+                query_texts=[question],
+                n_results=self.top_k,
+                include=["documents", "metadatas"],
+            )
 
         # results structure varies; normalize
         docs = []
         metadatas = []
         try:
-            docs = results['documents'][0]
-            metadatas = results['metadatas'][0]
+            docs = results["documents"][0]
+            metadatas = results["metadatas"][0]
         except Exception:
             # try older structure
-            docs = results.get('documents', [])
-            metadatas = results.get('metadatas', [])
+            docs = results.get("documents", [])
+            metadatas = results.get("metadatas", [])
 
         # Build context for LLM
         chunks = []
         folders = []
         for d, m in zip(docs, metadatas):
             chunks.append(d)
-            fn = m.get('folder_name') if isinstance(m, dict) else None
+            fn = m.get("folder_name") if isinstance(m, dict) else None
             if fn and fn not in folders:
                 folders.append(fn)
 
         # Ask LocalBrain for a grounded answer
         try:
             from src.modules.local_brain import LocalBrain
+
             lb = LocalBrain()
             # system prompt per spec
             system = """
@@ -212,21 +234,23 @@ class RAGEngine:
             # Use LocalBrain to call LLM (it expects to return JSON in some cases), but here we just ask for plain text
             # We'll directly call ollama via LocalBrain.client to keep behavior consistent with project
             lb.initialize()
+            if lb.client is None:
+                raise RuntimeError("LLM клиент не инициализирован")
             response = lb.client.chat(
                 model=lb.model,
                 messages=[
-                    {'role': 'system', 'content': system},
-                    {'role': 'user', 'content': user_prompt}
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user_prompt},
                 ],
-                options={'temperature': 0.0}
+                options={"temperature": 0.0},
             )
 
-            answer = response['message']['content']
+            answer = response["message"]["content"]
         except Exception as e:
             answer = f"Ошибка при генерации ответа: {e}"
 
         return {
-            'answer': answer,
-            'sources': folders,
-            'chunks': chunks,
+            "answer": answer,
+            "sources": folders,
+            "chunks": chunks,
         }

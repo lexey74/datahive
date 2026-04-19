@@ -1,25 +1,26 @@
 import asyncio
 import logging
 import sys
+
+from aiogram import Bot, Dispatcher
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
+from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
+from aiohttp import web
 import uvloop
+
+from src.bot.config import BotConfig
+from src.bot.services.queue_store import init_db
 
 # Setup logging
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    stream=sys.stdout
+    stream=sys.stdout,
 )
 logger = logging.getLogger(__name__)
 
-from aiogram import Bot, Dispatcher
-from aiogram.enums import ParseMode
-from aiogram.client.default import DefaultBotProperties
-from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
-from aiohttp import web
-
-from src.bot.config import BotConfig
-from src.bot.services.queue_store import init_db
 
 async def main() -> None:
     config = BotConfig()
@@ -29,7 +30,7 @@ async def main() -> None:
 
     bot = Bot(
         token=config.telegram_bot_token,
-        default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
 
     dp = Dispatcher(storage=MemoryStorage())
@@ -75,13 +76,16 @@ async def main() -> None:
         site = web.TCPSite(runner, host=config.webhook_listen, port=config.webhook_port)
         await site.start()
 
-        logger.info(f"🚀 Data Hive Bot запущен (webhook, {config.webhook_listen}:{config.webhook_port})")
+        logger.info(
+            f"🚀 Data Hive Bot запущен (webhook, {config.webhook_listen}:{config.webhook_port})"
+        )
         await asyncio.Event().wait()
     else:
         # --- Polling режим ---
         logger.info("🚀 Data Hive Bot запущен (polling)...")
         await bot.delete_webhook(drop_pending_updates=True)
         await dp.start_polling(bot)
+
 
 if __name__ == "__main__":
     if sys.platform != "win32":

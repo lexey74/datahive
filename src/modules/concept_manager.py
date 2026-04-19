@@ -4,7 +4,7 @@ ConceptManager — накопительные тематические wiki-ст
 При каждом ingest:
   1. Извлекает из Knowledge.md ключевые термины, имена, инструменты
   2. Для каждого нового концепта — создаёт страницу wiki/concepts/{slug}.md
-  3. Для существующих концептов — обновляет «Упоминания» и «Синтез» через Ollama
+    3. Для существующих концептов — обновляет «Упоминания» и «Синтез» через llama.cpp
 
 Структура страницы концепта:
   ---
@@ -22,19 +22,20 @@ ConceptManager — накопительные тематические wiki-ст
   ## Упоминания
   - [[2026-04-08_youtube_python_tips]] — контекст использования
 """
+
 from __future__ import annotations
 
 import logging
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
 # Минимальная длина термина для создания концепт-страницы
 _MIN_TERM_LEN = 3
-# Максимум концептов за один ingest (чтобы не перегружать Ollama)
+# Максимум концептов за один ingest (чтобы не перегружать LLM)
 _MAX_CONCEPTS_PER_INGEST = 8
 
 
@@ -46,7 +47,7 @@ class ConceptManager:
         cm = ConceptManager(
             concepts_dir=Path("users/lexey/wiki/concepts"),
             ollama_model="llama3.2",
-            ollama_url="http://localhost:11434",
+            ollama_url="http://localhost:8080",
         )
         cm.update_concepts(
             knowledge_md_path=Path("users/lexey/downloads/2026-04-08_.../Knowledge.md"),
@@ -58,20 +59,21 @@ class ConceptManager:
         self,
         concepts_dir: Path,
         ollama_model: str = "llama3.2",
-        ollama_url: str = "http://localhost:11434",
+        ollama_url: str = "http://localhost:8080",
     ) -> None:
         self.concepts_dir = Path(concepts_dir)
         self.ollama_model = ollama_model
         self.ollama_url = ollama_url
-        self._client = None
+        self._client: Any = None
 
-    def _get_client(self):
+    def _get_client(self) -> Any:
         if self._client is None:
             try:
-                import ollama
-                self._client = ollama.Client(host=self.ollama_url)
-            except ImportError:
-                raise ImportError("Установите ollama: pip install ollama")
+                from .local_brain import LlamaCppClient
+
+                self._client = LlamaCppClient(host=self.ollama_url)
+            except ImportError as e:
+                raise ImportError("Не удалось импортировать llama.cpp клиент") from e
         return self._client
 
     # ── Основной метод ────────────────────────────────────────────
@@ -96,7 +98,9 @@ class ConceptManager:
         self.concepts_dir.mkdir(parents=True, exist_ok=True)
 
         if not knowledge_md_path.exists():
-            logger.warning(f"ConceptManager: Knowledge.md не найден: {knowledge_md_path}")
+            logger.warning(
+                f"ConceptManager: Knowledge.md не найден: {knowledge_md_path}"
+            )
             return []
 
         knowledge_text = knowledge_md_path.read_text(encoding="utf-8")
@@ -106,8 +110,8 @@ class ConceptManager:
         # Отфильтровать служебные ссылки на файлы (description.md, transcript.md и т.п.)
         # и числовые имена файлов изображений
         _skip_patterns = re.compile(
-            r"\.(md|jpg|jpeg|png|mp4|webp)\b"   # ссылки на файлы
-            r"|^\d{2}_\d+_",                     # числовые имена (instagram media)
+            r"\.(md|jpg|jpeg|png|mp4|webp)\b"  # ссылки на файлы
+            r"|^\d{2}_\d+_",  # числовые имена (instagram media)
             re.IGNORECASE,
         )
         wiki_terms = [t for t in wiki_terms if not _skip_patterns.search(t)]
@@ -167,19 +171,21 @@ class ConceptManager:
         # Обновить счётчик mentions в frontmatter
         page_content = _increment_mentions(page_content)
 
-        # Обновить синтез через Ollama (только если накопилось ≥ 2 упоминаний)
+        # Обновить синтез через llama.cpp (только если накопилось ≥ 2 упоминаний)
         mention_count = page_content.count("- [[")
         if mention_count >= 2:
             page_content = self._update_synthesis(page_content, term)
 
         page_path.write_text(page_content, encoding="utf-8")
-        logger.debug(f"ConceptManager: → {page_path.name} (упоминаний: {mention_count})")
+        logger.debug(
+            f"ConceptManager: → {page_path.name} (упоминаний: {mention_count})"
+        )
         return page_path
 
     def _build_new_page(self, term: str, slug: str, today: str) -> str:
         """Шаблон для новой концепт-страницы."""
         return (
-            f"---\ntype: concept\nterm: \"{term}\"\n"
+            f'---\ntype: concept\nterm: "{term}"\n'
             f"first_seen: {today}\nmentions: 0\n---\n\n"
             f"# {term}\n\n"
             "## Синтез\n\n"
@@ -189,10 +195,10 @@ class ConceptManager:
 
     def _update_synthesis(self, page_content: str, term: str) -> str:
         """
-        Обновить секцию '## Синтез' через Ollama.
+        Обновить секцию '## Синтез' через llama.cpp.
 
         Читает все упоминания из страницы и просит LLM написать синтез.
-        Если Ollama недоступна — тихо пропускает.
+        Если LLM недоступна — тихо пропускает.
         """
         # Извлечь упоминания
         mentions_block = _extract_section(page_content, "## Упоминания")
@@ -216,7 +222,7 @@ class ConceptManager:
             )
             new_synthesis = response["message"]["content"].strip()
         except Exception as e:
-            logger.debug(f"ConceptManager: Ollama синтез недоступен ({e})")
+            logger.debug(f"ConceptManager: llama.cpp синтез недоступен ({e})")
             return page_content
 
         # Заменить содержимое секции Синтез
@@ -226,7 +232,7 @@ class ConceptManager:
 
     def list_concepts(self) -> list[dict]:
         """Вернуть список всех концептов с метаданными."""
-        concepts = []
+        concepts: list[dict[str, object]] = []
         if not self.concepts_dir.exists():
             return concepts
         for page in sorted(self.concepts_dir.glob("*.md")):
@@ -238,6 +244,7 @@ class ConceptManager:
 
 
 # ── Текстовые утилиты ─────────────────────────────────────────────
+
 
 def _term_to_slug(term: str) -> str:
     """Конвертировать название концепта в slug для имени файла."""
@@ -266,7 +273,11 @@ def _extract_context(text: str, term: str, max_chars: int = 200) -> str:
     match = pattern.search(text)
     if not match:
         # Нет прямого упоминания — берём первые строки саммари
-        lines = [l.strip() for l in text.splitlines() if l.strip() and not l.startswith("---")]
+        lines = [
+            line.strip()
+            for line in text.splitlines()
+            if line.strip() and not line.startswith("---")
+        ]
         return " ".join(lines[2:5])[:max_chars] or "упомянуто в источнике"
 
     start = max(0, match.start() - 80)
@@ -289,9 +300,11 @@ def _append_mention(page_content: str, mention_line: str) -> str:
 
 def _increment_mentions(page_content: str) -> str:
     """Увеличить счётчик mentions в YAML frontmatter."""
+
     def replacer(m: re.Match) -> str:
         n = int(m.group(1))
         return f"mentions: {n + 1}"
+
     return re.sub(r"mentions:\s*(\d+)", replacer, page_content, count=1)
 
 
@@ -315,5 +328,5 @@ def _parse_frontmatter_field(content: str, field: str) -> Optional[str]:
     pattern = re.compile(rf"^{field}:\s*(.+)$", re.MULTILINE)
     match = pattern.search(content)
     if match:
-        return match.group(1).strip().strip('"\'')
+        return match.group(1).strip().strip("\"'")
     return None

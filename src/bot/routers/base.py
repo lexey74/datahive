@@ -4,13 +4,14 @@ from aiogram.enums import ParseMode
 
 router = Router()
 
+
 @router.message(CommandStart())
-async def cmd_start(message: types.Message):
+async def cmd_start(message: types.Message) -> None:
     """
     Handler for /start command
     """
     user_name = message.from_user.first_name if message.from_user else "User"
-    
+
     welcome_text = f"""
 🐝 <b>Data Hive — Personal Knowledge Manager</b>
 
@@ -49,7 +50,7 @@ async def cmd_start(message: types.Message):
 
 
 @router.message(Command("help"))
-async def cmd_help(message: types.Message):
+async def cmd_help(message: types.Message) -> None:
     """
     Handler for /help command
     """
@@ -76,7 +77,7 @@ async def cmd_help(message: types.Message):
 
 <b>🧠 2. Обработка и AI:</b>
 • /transcribe - Транскрибировать все видео в папке (Whisper)
-• /ai - Запустить AI анализ: тегирование, саммари (Ollama)
+• /ai - Запустить AI анализ: тегирование, саммари (llama.cpp)
 • /ask &lt;вопрос&gt; - Умный поиск по вашей базе (RAG)
 
 <b>� 3. Wiki (LLM Knowledge Base):</b>
@@ -88,6 +89,7 @@ async def cmd_help(message: types.Message):
 <b>🔧 4. Утилиты:</b>
 • /mcp - Получить ключ для подключения IDE
 • /check - Проверить статус фоновых задач
+• /status - Детальный статус + health-check llama.cpp
 • /show - Показать файлы последней папки
 
 📊 <b>Как это работает:</b>

@@ -1,0 +1,14 @@
+target-version = "py312"
+
+[lint]
+exclude = [
+  "venv",
+  "downloads",
+  "users",
+  "logs",
+  "temp",
+  "archive",
+]
+
+[lint.per-file-ignores]
+"scripts/*.py" = ["E402"]

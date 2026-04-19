@@ -9,6 +9,7 @@
     cd /home/lexey/projects/datahive
     venv/bin/python3 scripts/build_concepts.py
 """
+
 from __future__ import annotations
 
 import sys
@@ -17,26 +18,31 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+# ruff: noqa: E402
 from src.modules.concept_manager import ConceptManager
-from src.modules.wiki_linter import WikiLinter, _parse_frontmatter_field
+from src.modules.wiki_linter import WikiLinter
 
 USER_ROOT = ROOT / "users" / "lexey"
 DOWNLOADS_DIR = USER_ROOT / "downloads"
 CONCEPTS_DIR = USER_ROOT / "wiki" / "concepts"
 
-OLLAMA_URL = "http://localhost:11434"
-OLLAMA_MODEL = "qwen3:4b"
+LLAMA_CPP_URL = "http://localhost:8080"
+LLAMA_CPP_MODEL = "qwen3:4b"
 
 
 def parse_tags(content: str) -> list[str]:
     """Извлечь теги из YAML frontmatter."""
     import re
+
     inline = re.search(r"^tags:\s*\[(.+)\]", content, re.MULTILINE)
     if inline:
         return [t.strip().lstrip("#") for t in inline.group(1).split(",") if t.strip()]
     block = re.search(r"^tags:\s*\n((?:[ \t]+-[ \t].+\n)*)", content, re.MULTILINE)
     if block:
-        return [re.sub(r"^-\s*#?", "", t).strip() for t in re.findall(r"-\s+(.+)", block.group(1))]
+        return [
+            re.sub(r"^-\s*#?", "", t).strip()
+            for t in re.findall(r"-\s+(.+)", block.group(1))
+        ]
     return []
 
 
@@ -46,17 +52,18 @@ def main() -> None:
         sys.exit(1)
 
     folders = sorted(
-        f for f in DOWNLOADS_DIR.iterdir()
+        f
+        for f in DOWNLOADS_DIR.iterdir()
         if f.is_dir() and (f / "Knowledge.md").exists()
     )
 
     print(f"📂 Папок с Knowledge.md: {len(folders)}")
-    print(f"🧠 Модель: {OLLAMA_MODEL}\n")
+    print(f"🧠 Модель: {LLAMA_CPP_MODEL}\n")
 
     cm = ConceptManager(
         concepts_dir=CONCEPTS_DIR,
-        ollama_model=OLLAMA_MODEL,
-        ollama_url=OLLAMA_URL,
+        ollama_model=LLAMA_CPP_MODEL,
+        ollama_url=LLAMA_CPP_URL,
     )
 
     total_created = 0
@@ -68,7 +75,11 @@ def main() -> None:
         tags = parse_tags(content)
 
         # Считаем сколько concept-страниц существовало до
-        existing_before = set(p.stem for p in CONCEPTS_DIR.glob("*.md")) if CONCEPTS_DIR.exists() else set()
+        existing_before = (
+            set(p.stem for p in CONCEPTS_DIR.glob("*.md"))
+            if CONCEPTS_DIR.exists()
+            else set()
+        )
 
         updated = cm.update_concepts(
             knowledge_md_path=knowledge_path,
@@ -76,24 +87,30 @@ def main() -> None:
             tags=tags,
         )
 
-        existing_after = set(p.stem for p in CONCEPTS_DIR.glob("*.md")) if CONCEPTS_DIR.exists() else set()
+        existing_after = (
+            set(p.stem for p in CONCEPTS_DIR.glob("*.md"))
+            if CONCEPTS_DIR.exists()
+            else set()
+        )
         new_pages = existing_after - existing_before
 
         if updated:
-            label = f"+{len(new_pages)} новых" if new_pages else f"обновлено {len(updated)}"
+            label = (
+                f"+{len(new_pages)} новых" if new_pages else f"обновлено {len(updated)}"
+            )
             print(f"  ✅ {folder.name[:60]}  [{label}]")
             total_created += len(new_pages)
             total_updated += len(updated) - len(new_pages)
         else:
             print(f"  –  {folder.name[:60]}  [нет новых концептов]")
 
-    print(f"\n{'─'*60}")
+    print(f"\n{'─' * 60}")
     print(f"📄 Concept-страниц создано:  {total_created}")
     print(f"📝 Concept-страниц обновлено: {total_updated}")
     print(f"📁 Папка: {CONCEPTS_DIR}")
 
     # Итоговый lint
-    print(f"\n🔍 Проверяю lint...")
+    print("\n🔍 Проверяю lint...")
     linter = WikiLinter(USER_ROOT)
     result = linter.run()
     unlinked = len(result.unlinked_tags)
