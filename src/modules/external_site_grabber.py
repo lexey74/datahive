@@ -3,16 +3,14 @@
 Используется для обхода блокировок IP на VPS.
 """
 
-import logging
 from pathlib import Path
 from urllib.parse import quote
 
 import httpx
-from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
+import structlog
+from playwright.async_api import Page, async_playwright, TimeoutError as PlaywrightTimeoutError
 
-logger = logging.getLogger("datahive.external_site_grabber")
-
-BASE_URL = "https://en.ssyoutube.com/en/download"
+logger = structlog.get_logger("datahive.external_site_grabber")
 
 
 class ExternalSiteError(Exception):
@@ -23,7 +21,8 @@ class ExternalSiteError(Exception):
 class ExternalSiteGrabber:
     """Загружает YouTube-видео через внешний сайт ssyoutube.com."""
 
-    def __init__(self, timeout_ms: int = 30_000) -> None:
+    def __init__(self, base_url: str = "https://en.ssyoutube.com/en/download", timeout_ms: int = 30_000) -> None:
+        self.base_url = base_url
         self.timeout_ms = timeout_ms
 
     async def download_video(
@@ -46,53 +45,53 @@ class ExternalSiteGrabber:
         Raises:
             ExternalSiteError: При любой ошибке загрузки
         """
-        logger.debug("Начинаем загрузку через внешний сайт: %s", url)
+        logger.debug("Начинаем загрузку через внешний сайт", url=url)
 
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
             try:
-                context = await browser.new_context()
-                page = await context.new_page()
+                async with browser.new_context() as context:
+                    page = await context.new_page()
 
-                target_url = f"{BASE_URL}?url={quote(url)}"
-                await page.goto(target_url)
+                    target_url = f"{self.base_url}?url={quote(url)}"
+                    await page.goto(target_url)
 
-                try:
-                    await page.wait_for_selector(
-                        ".download-links",
-                        timeout=self.timeout_ms,
-                    )
-                except PlaywrightTimeoutError as exc:
-                    logger.warning(
-                        "Таймаут ожидания .download-links для %s: %s", url, exc
-                    )
-                    raise ExternalSiteError(
-                        f"Таймаут при ожидании ссылок для скачивания: {url}"
-                    ) from exc
+                    try:
+                        await page.wait_for_selector(
+                            ".download-links",
+                            timeout=self.timeout_ms,
+                        )
+                    except PlaywrightTimeoutError as exc:
+                        logger.warning(
+                            "Таймаут ожидания .download-links", url=url, error=str(exc)
+                        )
+                        raise ExternalSiteError(
+                            f"Таймаут при ожидании ссылок для скачивания: {url}"
+                        ) from exc
 
-                # Собираем все mp4-ссылки и выбираем наилучшее качество
-                download_url = await self._find_best_mp4_link(page, quality)
-                if not download_url:
-                    logger.warning(
-                        "Не найдено подходящих mp4-ссылок для %s", url
-                    )
-                    raise ExternalSiteError(
-                        f"Не найдено mp4-ссылок для скачивания: {url}"
-                    )
+                    # Собираем все mp4-ссылки и выбираем наилучшее качество
+                    download_url = await self._find_best_mp4_link(page, quality)
+                    if not download_url:
+                        logger.warning(
+                            "Не найдено подходящих mp4-ссылок", url=url
+                        )
+                        raise ExternalSiteError(
+                            f"Не найдено mp4-ссылок для скачивания: {url}"
+                        )
 
-                logger.info("Найдена ссылка для скачивания, начинаем загрузку файла")
+                    logger.info("Найдена ссылка для скачивания, начинаем загрузку файла")
 
-                output_dir.mkdir(parents=True, exist_ok=True)
-                output_path = output_dir / "video.mp4"
+                    output_dir.mkdir(parents=True, exist_ok=True)
+                    output_path = output_dir / "video.mp4"
 
-                await self._stream_download(download_url, output_path)
-                return output_path
+                    await self._stream_download(download_url, output_path)
+                    return output_path
 
             finally:
                 await browser.close()
 
     async def _find_best_mp4_link(
-        self, page: object, quality: str
+        self, page: Page, quality: str
     ) -> str | None:
         """
         Ищет лучшую mp4-ссылку на странице.
@@ -105,7 +104,7 @@ class ExternalSiteGrabber:
             URL для скачивания или None
         """
         # Получаем все ссылки внутри .download-links
-        links = await page.query_selector_all(".download-links a[href]")  # type: ignore[attr-defined]
+        links = await page.query_selector_all(".download-links a[href]")
 
         candidates: list[tuple[int, str]] = []
 
@@ -177,16 +176,20 @@ class ExternalSiteGrabber:
         try:
             async with httpx.AsyncClient(follow_redirects=True, timeout=300.0) as client:
                 async with client.stream("GET", url) as response:
-                    if response.status_code >= 400:
-                        logger.warning(
-                            "HTTP ошибка %d при загрузке файла", response.status_code
-                        )
-                        raise ExternalSiteError(
-                            f"HTTP ошибка {response.status_code} при загрузке видео"
-                        )
-                    with output_path.open("wb") as f:
-                        async for chunk in response.aiter_bytes(chunk_size=65536):
-                            f.write(chunk)
+                    response.raise_for_status()
+                    try:
+                        async with output_path.open("wb") as f:
+                            async for chunk in response.aiter_bytes(chunk_size=65536):
+                                await f.write(chunk)
+                    except Exception:
+                        if output_path.exists():
+                            output_path.unlink()
+                        raise
+        except httpx.HTTPStatusError as exc:
+            logger.warning("HTTP ошибка при загрузке файла", status_code=exc.response.status_code, error=str(exc))
+            raise ExternalSiteError(
+                f"HTTP ошибка {exc.response.status_code} при загрузке видео"
+            ) from exc
         except httpx.HTTPError as exc:
-            logger.warning("Ошибка HTTP при загрузке файла: %s", exc)
+            logger.warning("Ошибка HTTP при загрузке файла", error=str(exc))
             raise ExternalSiteError(f"Ошибка при загрузке видео: {exc}") from exc
