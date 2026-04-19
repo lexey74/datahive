@@ -48,6 +48,12 @@ class BotConfig(BaseSettings):
     webhook_path: str = Field("bot", alias="WEBHOOK_PATH")
     webhook_secret_token: Optional[str] = Field(None, alias="WEBHOOK_SECRET_TOKEN")
 
+    # External Site Grabber (YouTube bypass)
+    external_site_url: str = Field(
+        "https://en.ssyoutube.com/en/download", alias="EXTERNAL_SITE_URL"
+    )
+    external_site_timeout_ms: int = Field(30_000, alias="EXTERNAL_SITE_TIMEOUT_MS")
+
     # Logs
     transcribe_log: Path = Path("logs/transcribe.log")
     ai_log: Path = Path("logs/ai.log")
