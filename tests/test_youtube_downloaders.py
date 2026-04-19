@@ -17,7 +17,7 @@ class TestYouTubeDownloaders:
     @pytest.fixture
     def video_downloader(self, settings):
         with patch(
-            "src.modules.youtube_video_downloader.ProductionYouTubeGrabber"
+            "src.modules.youtube_downloader_base.ProductionYouTubeGrabber"
         ) as mock_grabber:
             downloader = YouTubeVideoDownloader(settings)
             downloader.grabber = mock_grabber.return_value
@@ -26,7 +26,7 @@ class TestYouTubeDownloaders:
     @pytest.fixture
     def shorts_downloader(self, settings):
         with patch(
-            "src.modules.youtube_shorts_downloader.ProductionYouTubeGrabber"
+            "src.modules.youtube_downloader_base.ProductionYouTubeGrabber"
         ) as mock_grabber:
             downloader = YouTubeShortsDownloader(settings)
             downloader.grabber = mock_grabber.return_value
@@ -49,8 +49,8 @@ class TestYouTubeDownloaders:
             "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
         )
 
-    @patch("src.modules.youtube_video_downloader.BaseDownloader.create_folder")
-    @patch("src.modules.youtube_video_downloader.BaseDownloader.save_description")
+    @patch("src.modules.downloader_base.BaseDownloader.create_folder")
+    @patch("src.modules.downloader_base.BaseDownloader.save_description")
     def test_download_video_success(
         self, mock_save_desc, mock_create_folder, video_downloader, tmp_path
     ):
@@ -92,8 +92,8 @@ class TestYouTubeDownloaders:
         video_downloader.grabber.get_metadata.assert_called_once()
         video_downloader.grabber.download_video.assert_called_once()
 
-    @patch("src.modules.youtube_shorts_downloader.BaseDownloader.create_folder")
-    @patch("src.modules.youtube_shorts_downloader.BaseDownloader.save_description")
+    @patch("src.modules.downloader_base.BaseDownloader.create_folder")
+    @patch("src.modules.downloader_base.BaseDownloader.save_description")
     def test_download_shorts_success(
         self, mock_save_desc, mock_create_folder, shorts_downloader, tmp_path
     ):

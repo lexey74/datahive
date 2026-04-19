@@ -12,33 +12,26 @@ from typing import Dict, List, Optional
 import structlog
 
 from .downloader_base import (
-    BaseDownloader,
     ContentSource,
+    DownloadError,
+    DownloadSettings,
     YouTubeContentType,
     YouTubeVideoResult,
-    DownloadSettings,
 )
 from .downloader_utils import (
     clean_filename,
     extract_video_id_youtube,
-    print_progress,
-    format_duration,
     format_count,
+    format_duration,
+    print_progress,
 )
-from .external_site_grabber import ExternalSiteGrabber
-from .youtube_grabber_base import YouTubeDownloadStrategy
-from .youtube_grabber_v2 import ProductionYouTubeGrabber, ImprovedCookieManager
 from .youtube_comment_service import YouTubeCommentService
+from .youtube_downloader_base import YouTubeBaseDownloader
 
 logger = structlog.get_logger("datahive.youtube_video_downloader")
 
 
-class DownloadError(Exception):
-    """Ошибка загрузки видео — все стратегии не сработали"""
-    pass
-
-
-class YouTubeVideoDownloader(BaseDownloader):
+class YouTubeVideoDownloader(YouTubeBaseDownloader):
     """
     Скачивает YouTube видео
 
@@ -56,41 +49,10 @@ class YouTubeVideoDownloader(BaseDownloader):
         external_site_url: str = "https://en.ssyoutube.com/en/download",
         external_site_timeout_ms: int = 30_000,
     ):
-        super().__init__(settings, output_dir)
-
-        # Создаем cookie manager
-        cookie_manager = None
-        if settings.youtube_cookies_dir:
-            cookie_manager = ImprovedCookieManager(
-                cookies_dir=settings.youtube_cookies_dir
-            )
-            # Добавляем все YouTube cookies
-            for cookie_file in settings.youtube_cookies_dir.glob(
-                "youtube_cookies*.txt"
-            ):
-                cookie_manager.add_cookies(cookie_file)
-        elif settings.youtube_cookies:
-            cookie_manager = ImprovedCookieManager(
-                cookies_dir=settings.youtube_cookies.parent
-            )
-            cookie_manager.add_cookies(settings.youtube_cookies)
-
-        # Инициализируем ProductionYouTubeGrabber
-        self.grabber = ProductionYouTubeGrabber(cookie_manager=cookie_manager)
-
-        # Первичная стратегия — внешний сайт-посредник
-        self._external_grabber = ExternalSiteGrabber(
-            base_url=external_site_url,
-            timeout_ms=external_site_timeout_ms,
-        )
+        super().__init__(settings, output_dir, external_site_url, external_site_timeout_ms)
 
         # Инициализируем сервис комментариев
         self.comment_service = YouTubeCommentService()
-
-    @property
-    def strategies(self) -> list[YouTubeDownloadStrategy]:
-        """Цепочка стратегий: ExternalSiteGrabber первым, ProductionYouTubeGrabber как fallback."""
-        return [self._external_grabber, self.grabber]
 
     def can_handle(self, url: str) -> bool:
         """Проверяет, может ли обработать URL"""
@@ -103,7 +65,10 @@ class YouTubeVideoDownloader(BaseDownloader):
 
     def download(self, url: str) -> YouTubeVideoResult:
         """
-        Скачивает YouTube видео
+        Скачивает YouTube видео.
+
+        NOTE: This method is always called from run_in_executor (no running event loop in thread),
+        so asyncio.run() is safe here.
 
         Args:
             url: URL видео
@@ -120,6 +85,8 @@ class YouTubeVideoDownloader(BaseDownloader):
 
         # Получаем метаданные через ProductionYouTubeGrabber
         metadata = self.grabber.get_metadata(url)
+        if metadata is None:
+            raise DownloadError(f"Не удалось получить метаданные для {url}")
 
         # Создаем папку
         channel = metadata.get("channel", "unknown_channel")
@@ -168,66 +135,6 @@ class YouTubeVideoDownloader(BaseDownloader):
             likes=metadata.get("like_count", 0),
             duration=metadata.get("duration", 0),
         )
-
-    async def _call_strategy(
-        self, strategy: YouTubeDownloadStrategy, url: str, folder_path: Path, quality: str
-    ) -> Path:
-        """
-        Вызывает стратегию, автоматически определяя sync/async реализацию.
-
-        Если `download_video` является корутиной — вызываем через await.
-        Если синхронная — запускаем в executor, чтобы не блокировать event loop.
-        """
-        import inspect
-        method = strategy.download_video
-        if inspect.iscoroutinefunction(method):
-            return await method(url, folder_path, quality)
-        else:
-            loop = asyncio.get_event_loop()
-            import functools
-            return await loop.run_in_executor(
-                None, functools.partial(method, url, folder_path, quality)
-            )
-
-    async def _run_strategy_chain(
-        self, url: str, folder_path: Path, quality: str
-    ) -> Path:
-        """
-        Перебирает стратегии по цепочке, возвращает путь к файлу при первом успехе.
-
-        Args:
-            url: URL видео
-            folder_path: Директория для сохранения
-            quality: Желаемое качество
-
-        Returns:
-            Путь к скачанному файлу
-
-        Raises:
-            DownloadError: Если все стратегии завершились неудачей
-        """
-        last_error: Optional[Exception] = None
-        for strategy in self.strategies:
-            strategy_name = type(strategy).__name__
-            try:
-                video_path = await self._call_strategy(strategy, url, folder_path, quality)
-                logger.info(
-                    "Стратегия загрузки сработала",
-                    strategy=strategy_name,
-                    url=url,
-                )
-                return video_path
-            except Exception as exc:
-                logger.warning(
-                    "Стратегия загрузки не сработала, переходим к следующей",
-                    strategy=strategy_name,
-                    error=str(exc),
-                )
-                last_error = exc
-
-        raise DownloadError(
-            f"Все стратегии загрузки не сработали для {url}"
-        ) from last_error
 
     def download_comments_only(self, url: str, folder_path: Path) -> Optional[Path]:
         """Скачивает только комментарии"""

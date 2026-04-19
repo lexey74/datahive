@@ -318,6 +318,7 @@ class BaseDownloader(ABC):
         return desc_file
 
     def save_comments(self, folder_path: Path, comments: List[dict]) -> Path:
+
         """
         Сохраняет комментарии в Markdown
 
@@ -349,3 +350,8 @@ class BaseDownloader(ABC):
                 f.write("---\n\n")
 
         return comments_file
+
+
+class DownloadError(Exception):
+    """Raised when all download strategies fail"""
+    pass
