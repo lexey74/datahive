@@ -98,3 +98,6 @@ proxies.txt
 # User data
 users/
 bot_state/
+
+# Git worktrees
+.worktrees/
