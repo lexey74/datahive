@@ -4,14 +4,16 @@ Base class for YouTube downloaders, providing shared strategy-chain logic.
 import asyncio
 import inspect
 from pathlib import Path
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 import structlog
 
 from .downloader_base import BaseDownloader, DownloadError, DownloadSettings
-from .external_site_grabber import ExternalSiteGrabber
 from .youtube_grabber_base import YouTubeDownloadStrategy
 from .youtube_grabber_v2 import ImprovedCookieManager, ProductionYouTubeGrabber
+
+if TYPE_CHECKING:
+    from .youtube_cookie_manager import PlaywrightCookieManager
 
 
 logger = structlog.get_logger(__name__)
@@ -24,6 +26,7 @@ class YouTubeBaseDownloader(BaseDownloader):
         self,
         settings: DownloadSettings,
         output_dir: Optional[Path] = None,
+        playwright_cookie_manager: Optional["PlaywrightCookieManager"] = None,
     ) -> None:
         super().__init__(settings, output_dir)
 
@@ -41,15 +44,23 @@ class YouTubeBaseDownloader(BaseDownloader):
             )
             cookie_manager.add_cookies(settings.youtube_cookies)
 
+        # Если передан PlaywrightCookieManager — добавляем его куки-файл в пул
+        self._playwright_cookie_manager = playwright_cookie_manager
+        if playwright_cookie_manager and playwright_cookie_manager.is_configured():
+            if cookie_manager is None:
+                cookie_file = playwright_cookie_manager.cookie_file_path
+                cookie_manager = ImprovedCookieManager(
+                    cookies_dir=cookie_file.parent
+                )
+            if playwright_cookie_manager.cookie_file_path.exists():
+                cookie_manager.add_cookies(playwright_cookie_manager.cookie_file_path)
+
         self.grabber = ProductionYouTubeGrabber(cookie_manager=cookie_manager)
-        self._external_grabber = ExternalSiteGrabber(
-            base_url=settings.external_site_url,
-            timeout_ms=settings.external_site_timeout_ms,
-        )
 
     @property
     def strategies(self) -> list[YouTubeDownloadStrategy]:
-        return [self._external_grabber, self.grabber]
+        # ExternalSiteGrabber убран: googlevideo.com URLs привязаны к IP стороннего сервиса
+        return [self.grabber]
 
     async def _call_strategy(
         self,

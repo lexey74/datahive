@@ -25,6 +25,25 @@ logger = logging.getLogger(__name__)
 async def main() -> None:
     config = BotConfig()
 
+    # YouTube Cookie Auto-Refresh
+    from src.modules.youtube_cookie_manager import PlaywrightCookieManager
+
+    auth_dir = config.youtube_auth_dir
+    auth_dir.mkdir(parents=True, exist_ok=True)
+    playwright_cookie_manager = PlaywrightCookieManager(
+        storage_state_path=auth_dir / "yt_storage_state.json",
+        cookie_file_path=auth_dir / "yt_cookies.txt",
+    )
+
+    if playwright_cookie_manager.is_configured():
+        logger.info("YouTube: запускаем первичный refresh куков...")
+        await playwright_cookie_manager.refresh_cookies()
+    else:
+        logger.info(
+            "YouTube: storage state не настроен. "
+            "Для авторизации запустите: python3 scripts/youtube_auth_setup.py"
+        )
+
     # Инициализация БД очереди задач
     await init_db()
 
@@ -46,6 +65,10 @@ async def main() -> None:
 
     dp.update.outer_middleware(AdminAccessMiddleware())
     dp["config"] = config
+    dp["playwright_cookie_manager"] = playwright_cookie_manager
+
+    # Запускаем фоновый refresh куков каждые 4 часа
+    asyncio.create_task(playwright_cookie_manager.start_background_refresh())
 
     if config.webhook_mode:
         # --- Webhook режим ---

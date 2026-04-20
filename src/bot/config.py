@@ -50,9 +50,15 @@ class BotConfig(BaseSettings):
 
     # External Site Grabber (YouTube bypass)
     external_site_url: str = Field(
-        "https://en.ssyoutube.com/en/download", alias="EXTERNAL_SITE_URL"
+        "https://en.ssyoutube.com/", alias="EXTERNAL_SITE_URL"
     )
     external_site_timeout_ms: int = Field(30_000, alias="EXTERNAL_SITE_TIMEOUT_MS")
+
+    # YouTube Cookie Auto-Refresh
+    youtube_auth_dir: Path = Field(
+        Path.home() / ".config" / "datahive",
+        alias="YOUTUBE_AUTH_DIR",
+    )
 
     # Logs
     transcribe_log: Path = Path("logs/transcribe.log")
