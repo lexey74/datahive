@@ -10,6 +10,8 @@ EnvironmentFile=/home/lexey/projects/datahive/.env
 ExecStart=/home/lexey/projects/datahive/venv/bin/python -m src.bot.main
 Restart=on-failure
 RestartSec=5s
+StandardOutput=append:/home/lexey/projects/datahive/logs/bot.log
+StandardError=append:/home/lexey/projects/datahive/logs/bot.log
 
 [Install]
 WantedBy=multi-user.target

@@ -144,13 +144,20 @@ def _is_finish_dialog(text: str) -> bool:
 
 
 def _build_download_settings(config: BotConfig) -> DownloadSettings:
-    youtube_cookies = Path("cookies.txt") if Path("cookies.txt").exists() else None
+    # Свежие куки от PlaywrightCookieManager имеют приоритет над старым cookies/
+    playwright_cookie = config.youtube_auth_dir / "yt_cookies.txt"
+    if playwright_cookie.exists():
+        youtube_cookies = playwright_cookie
+        youtube_cookies_dir = None
+    else:
+        youtube_cookies = Path("cookies.txt") if Path("cookies.txt").exists() else None
+        youtube_cookies_dir = Path("cookies") if Path("cookies").exists() else None
+
     instagram_cookies = (
-        Path("cookies/instagram.json")
-        if Path("cookies/instagram.json").exists()
+        Path("cookies/instagram_cookies.txt")
+        if Path("cookies/instagram_cookies.txt").exists()
         else None
     )
-    youtube_cookies_dir = Path("cookies") if Path("cookies").exists() else None
 
     return DownloadSettings(
         youtube_cookies=youtube_cookies,
