@@ -1,17 +1,26 @@
 """
 Загрузчик YouTube-видео через внешний сайт-посредник (ssyoutube.com).
 Используется для обхода блокировок IP на VPS.
+
+Алгоритм:
+  1. Открыть страницу ssyoutube.com
+  2. Перехватить AJAX-ответ от api-wh.ssyoutube.com/api/convert
+  3. Заполнить форму URL и отправить
+  4. Из API-ответа выбрать лучший mp4-поток (isBundle=True, max qualityNumber)
+  5. Скачать файл через httpx
 """
 
 import asyncio
 from pathlib import Path
-from urllib.parse import quote
 
 import httpx
 import structlog
-from playwright.async_api import Page, async_playwright, TimeoutError as PlaywrightTimeoutError
+from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
 
 logger = structlog.get_logger("datahive.external_site_grabber")
+
+# Таймаут ожидания API-ответа в секундах
+_API_WAIT_TIMEOUT = 30.0
 
 
 class ExternalSiteError(Exception):
@@ -22,7 +31,7 @@ class ExternalSiteError(Exception):
 class ExternalSiteGrabber:
     """Загружает YouTube-видео через внешний сайт ssyoutube.com."""
 
-    def __init__(self, base_url: str = "https://en.ssyoutube.com/en/download", timeout_ms: int = 30_000) -> None:
+    def __init__(self, base_url: str = "https://en.ssyoutube.com/", timeout_ms: int = 30_000) -> None:
         self.base_url = base_url
         self.timeout_ms = timeout_ms
 
@@ -38,7 +47,7 @@ class ExternalSiteGrabber:
         Args:
             url: URL YouTube-видео
             output_dir: Директория для сохранения файла
-            quality: Желаемое качество ('best' или конкретное разрешение)
+            quality: Желаемое качество ('best' или конкретное разрешение, напр. '720')
 
         Returns:
             Путь к скачанному файлу
@@ -51,33 +60,44 @@ class ExternalSiteGrabber:
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
             try:
-                async with browser.new_context() as context:
+                context = await browser.new_context()
+                try:
                     page = await context.new_page()
 
-                    target_url = f"{self.base_url}?url={quote(url)}"
-                    await page.goto(target_url)
+                    # Перехватываем ответ API с прямыми ссылками
+                    api_future: asyncio.Future[dict] = asyncio.get_event_loop().create_future()
 
+                    async def _on_response(response) -> None:
+                        if "api-wh.ssyoutube.com/api/convert" in response.url:
+                            try:
+                                data = await response.json()
+                                if not api_future.done():
+                                    api_future.set_result(data)
+                            except Exception as exc:
+                                if not api_future.done():
+                                    api_future.set_exception(exc)
+
+                    page.on("response", _on_response)
+
+                    await page.goto(self.base_url, wait_until="networkidle", timeout=self.timeout_ms)
+
+                    # Заполняем форму и отправляем
+                    await page.fill('input[name="url"]', url)
+                    await page.click("form button")
+
+                    # Ждём API-ответа
                     try:
-                        await page.wait_for_selector(
-                            ".download-links",
-                            timeout=self.timeout_ms,
-                        )
-                    except PlaywrightTimeoutError as exc:
-                        logger.warning(
-                            "Таймаут ожидания .download-links", url=url, error=str(exc)
-                        )
+                        api_data = await asyncio.wait_for(api_future, timeout=_API_WAIT_TIMEOUT)
+                    except asyncio.TimeoutError as exc:
                         raise ExternalSiteError(
-                            f"Таймаут при ожидании ссылок для скачивания: {url}"
+                            f"Таймаут ожидания API-ответа от ssyoutube: {url}"
                         ) from exc
 
-                    # Собираем все mp4-ссылки и выбираем наилучшее качество
-                    download_url = await self._find_best_mp4_link(page, quality)
+                    # Выбираем лучший URL
+                    download_url = self._pick_best_url(api_data, quality)
                     if not download_url:
-                        logger.warning(
-                            "Не найдено подходящих mp4-ссылок", url=url
-                        )
                         raise ExternalSiteError(
-                            f"Не найдено mp4-ссылок для скачивания: {url}"
+                            f"Не найдено подходящих mp4-ссылок в API-ответе: {url}"
                         )
 
                     logger.info("Найдена ссылка для скачивания, начинаем загрузку файла")
@@ -88,80 +108,62 @@ class ExternalSiteGrabber:
                     await self._stream_download(download_url, output_path)
                     return output_path
 
+                finally:
+                    await context.close()
             finally:
                 await browser.close()
 
-    async def _find_best_mp4_link(
-        self, page: Page, quality: str
-    ) -> str | None:
+    def _pick_best_url(self, api_data: dict, quality: str) -> str | None:
         """
-        Ищет лучшую mp4-ссылку на странице.
+        Выбирает лучший mp4-URL из API-ответа.
+
+        Приоритет: isBundle=True (видео+аудио) с максимальным qualityNumber.
+        При конкретном quality — ищем точное совпадение среди bundle-потоков,
+        иначе отдаём лучший bundle.
 
         Args:
-            page: Playwright Page объект
-            quality: Желаемое качество
+            api_data: Распарсенный JSON-ответ от api-wh.ssyoutube.com
+            quality: 'best' или конкретное разрешение ('720', '1080', ...)
 
         Returns:
             URL для скачивания или None
         """
-        # Получаем все ссылки внутри .download-links
-        links = await page.query_selector_all(".download-links a[href]")
+        url_list: list[dict] = api_data.get("url", [])
 
-        candidates: list[tuple[int, str]] = []
+        # Фильтруем: только mp4 с видео+аудио (isBundle=True)
+        bundles = [
+            entry for entry in url_list
+            if entry.get("ext") == "mp4"
+            and entry.get("isBundle") is True
+            and entry.get("url")
+        ]
 
-        for link in links:
-            href: str | None = await link.get_attribute("href")
-            if not href or "mp4" not in href.lower():
-                # Проверяем data-quality или текст кнопки
-                data_quality: str | None = await link.get_attribute("data-quality")
-                text: str = (await link.inner_text()).lower()
-                if "mp4" not in text and not data_quality:
-                    continue
-                if not href:
-                    continue
+        if not bundles:
+            # Запасной вариант: любой downloadable mp4
+            bundles = [
+                entry for entry in url_list
+                if entry.get("ext") == "mp4"
+                and entry.get("downloadable") is True
+                and entry.get("url")
+            ]
 
-            # Пытаемся определить разрешение
-            resolution = 0
-            data_quality = await link.get_attribute("data-quality")
-            if data_quality:
-                try:
-                    resolution = int(data_quality.replace("p", ""))
-                except ValueError:
-                    pass
-
-            if resolution == 0:
-                # Ищем в тексте кнопки
-                text = (await link.inner_text()).lower()
-                for res in (2160, 1440, 1080, 720, 480, 360, 240, 144):
-                    if str(res) in text:
-                        resolution = res
-                        break
-
-            candidates.append((resolution, href))
-
-        if not candidates:
+        if not bundles:
             return None
 
         # Сортируем по убыванию разрешения
-        candidates.sort(key=lambda x: x[0], reverse=True)
+        bundles.sort(key=lambda e: e.get("qualityNumber", 0), reverse=True)
 
         if quality == "best":
-            return candidates[0][1]
+            return bundles[0]["url"]
 
-        # Пытаемся найти конкретное качество
-        requested_res = 0
-        try:
-            requested_res = int(quality.replace("p", ""))
-        except ValueError:
-            pass
+        # Ищем точное совпадение по quality
+        requested = quality.replace("p", "")
+        for entry in bundles:
+            if str(entry.get("quality", "")) == requested or str(entry.get("qualityNumber", "")) == requested:
+                return entry["url"]
 
-        if requested_res:
-            for res, href in candidates:
-                if res == requested_res:
-                    return href
-
-        # Возвращаем лучшее доступное
-        return candidates[0][1]
+        # Не нашли точного — отдаём лучшее доступное
+        return bundles[0]["url"]
 
     async def _stream_download(self, url: str, output_path: Path) -> None:
         """
