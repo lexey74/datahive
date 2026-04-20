@@ -347,6 +347,13 @@ class ProductionYouTubeGrabber:
             ]
         )
 
+        # EJS: JS-солвер для n-challenge (требуется в yt-dlp 2026+)
+        cmd.extend([
+            "--no-plugin-dirs",
+            "--js-runtimes", "node:/usr/bin/node",
+            "--remote-components", "ejs:github",
+        ])
+
         # No warnings and quiet mode for clean JSON output
         cmd.extend(["--no-warnings", "--quiet"])
 
