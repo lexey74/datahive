@@ -20,6 +20,8 @@ import re
 from datetime import datetime
 from pathlib import Path
 
+from .graph_manager import GraphManager
+
 logger = logging.getLogger(__name__)
 
 
@@ -42,6 +44,7 @@ class WikiManager:
         self.wiki_dir = self.user_root / "wiki"
         self.concepts_dir = self.wiki_dir / "concepts"
         self.queries_dir = self.wiki_dir / "queries"
+        self.graph_manager = GraphManager(self.wiki_dir)
 
     def ensure_dirs(self) -> None:
         """Создать нужные папки если не существуют."""
@@ -227,6 +230,41 @@ class WikiManager:
         logger.info(f"✅ WikiManager: вопрос сохранён → {file_path.name}")
         return file_path
 
+    # ── Граф знаний ─────────────────────────────────────────────────
+
+    def update_graph(
+        self,
+        folder_name: str,
+        title: str,
+        date: str,
+        wiki_links: list[str],
+    ) -> None:
+        """
+        Обновить граф знаний: добавить article node + edges к концептам.
+
+        Также обновляет секцию «Обратные ссылки» в concept pages.
+
+        Args:
+            folder_name: Имя папки статьи
+            title: Заголовок статьи
+            date: Дата создания
+            wiki_links: Список терминов из [[wiki-ссылок]] Knowledge.md
+        """
+        self.ensure_dirs()
+        self.graph_manager.update_from_knowledge(
+            folder_name=folder_name,
+            title=title,
+            date=date,
+            wiki_links=wiki_links,
+        )
+        # Обновить backlinks в concept pages
+        self.graph_manager.update_backlinks_in_concepts(self.concepts_dir)
+        logger.info(f"✅ WikiManager: граф обновлён → {folder_name} ({len(wiki_links)} связей)")
+
+    def get_graph_stats(self) -> dict:
+        """Статистика графа знаний."""
+        return self.graph_manager.get_stats()
+
     # ── Статистика ────────────────────────────────────────────────
 
     def get_stats(self) -> dict:
@@ -251,6 +289,11 @@ class WikiManager:
 
         if self.queries_dir.exists():
             stats["query_pages"] = len(list(self.queries_dir.glob("*.md")))
+
+        # Статистика графа
+        graph_stats = self.graph_manager.get_stats()
+        stats["graph_nodes"] = graph_stats.get("nodes", 0)
+        stats["graph_edges"] = graph_stats.get("edges", 0)
 
         return stats
 
