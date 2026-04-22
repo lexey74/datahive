@@ -23,7 +23,7 @@ async def _llama_cpp_health(config: BotConfig) -> tuple[str, str]:
     from src.modules.local_brain import LocalBrain
 
     def _probe_model() -> None:
-        brain = LocalBrain(model=config.ollama_model, base_url=config.ollama_url)
+        brain = LocalBrain(model=config.ollama_model, base_url=config.ollama_url, api_key=config.ollama_api_key)
         brain.initialize()
         if brain.client is None:
             raise RuntimeError("LLM клиент не инициализирован")
@@ -260,7 +260,7 @@ async def cmd_ai(message: types.Message, config: BotConfig, bot: Bot) -> None:
 
         await queue_store.set_running("ai", user_id)
 
-        brain = LocalBrain(model=config.ollama_model, base_url=config.ollama_url)
+        brain = LocalBrain(model=config.ollama_model, base_url=config.ollama_url, api_key=config.ollama_api_key)
         tag_manager = TagManager()
 
         ai_result = await asyncio.to_thread(

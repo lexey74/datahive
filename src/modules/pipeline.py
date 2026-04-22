@@ -46,6 +46,7 @@ class DataHivePipeline:
         self.brain = LocalBrain(
             model=config.get("ollama_model", "llama3.2"),
             base_url=config.get("ollama_url", "http://localhost:8080"),
+            api_key=config.get("ollama_api_key", ""),
         )
 
         if config.get("num_threads"):

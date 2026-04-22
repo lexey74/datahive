@@ -14,9 +14,10 @@ logger = logging.getLogger(__name__)
 class LlamaCppClient:
     """Минимальный OpenAI-совместимый клиент для llama.cpp server."""
 
-    def __init__(self, host: str, timeout: int = 180) -> None:
+    def __init__(self, host: str, timeout: int = 180, api_key: str = "") -> None:
         self.host = host.rstrip("/")
         self.timeout = timeout
+        self.api_key = api_key
 
     def chat(
         self,
@@ -46,10 +47,14 @@ class LlamaCppClient:
 
         body = json.dumps(payload).encode("utf-8")
         endpoint = self._build_chat_endpoint()
+        headers: Dict[str, str] = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+
         req = url_request.Request(
             endpoint,
             data=body,
-            headers={"Content-Type": "application/json"},
+            headers=headers,
             method="POST",
         )
 
@@ -79,7 +84,10 @@ class LlamaCppClient:
         last_error: Optional[Exception] = None
 
         for endpoint in endpoints:
-            req = url_request.Request(endpoint, method="GET")
+            headers: Dict[str, str] = {}
+            if self.api_key:
+                headers["Authorization"] = f"Bearer {self.api_key}"
+            req = url_request.Request(endpoint, headers=headers, method="GET")
             try:
                 with url_request.urlopen(req, timeout=5):
                     return
@@ -138,7 +146,7 @@ Output: strictly JSON.
 """
 
     def __init__(
-        self, model: str = "llama3.2", base_url: str = "http://localhost:8080"
+        self, model: str = "llama3.2", base_url: str = "http://localhost:8080", api_key: str = ""
     ) -> None:
         """
         Инициализация LLM клиента
@@ -146,9 +154,11 @@ Output: strictly JSON.
         Args:
             model: Название модели в llama.cpp server
             base_url: URL llama.cpp сервера
+            api_key: Bearer-токен для аутентификации
         """
         self.model = model
         self.base_url = base_url
+        self.api_key = api_key
         self.client: Optional[LlamaCppClient] = None
         self.num_threads = None
         self.num_ctx = None
@@ -156,7 +166,7 @@ Output: strictly JSON.
     def initialize(self) -> None:
         """Инициализация клиента llama.cpp"""
         try:
-            self.client = LlamaCppClient(host=self.base_url)
+            self.client = LlamaCppClient(host=self.base_url, api_key=self.api_key)
             self.client.ping()
             logger.info(f"✅ llama.cpp подключен: {self.model} @ {self.base_url}")
         except Exception as e:

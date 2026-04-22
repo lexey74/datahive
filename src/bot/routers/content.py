@@ -255,7 +255,7 @@ def _ollama_chat(
     num_predict: int = 250,
 ) -> str:
     model = config.ollama_model_complex or config.ollama_model
-    brain = LocalBrain(model=model, base_url=config.ollama_url)
+    brain = LocalBrain(model=model, base_url=config.ollama_url, api_key=config.ollama_api_key)
     brain.initialize()
     if brain.client is None:
         raise RuntimeError("LLM клиент не инициализирован")

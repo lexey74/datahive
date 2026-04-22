@@ -39,6 +39,10 @@ class BotConfig(BaseSettings):
             "LLAMA_CPP_MODEL_COMPLEX", "OLLAMA_MODEL_COMPLEX"
         ),
     )
+    ollama_api_key: str = Field(
+        "",
+        validation_alias=AliasChoices("LLAMA_CPP_API_KEY", "OLLAMA_API_KEY"),
+    )
 
     # Webhook
     webhook_mode: bool = Field(False, alias="WEBHOOK_MODE")
