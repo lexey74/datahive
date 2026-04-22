@@ -14,6 +14,8 @@ from .hybrid_grabber import HybridGrabber
 from .local_ears import LocalEars
 from .local_brain import LocalBrain
 from .wiki_manager import WikiManager
+from .concept_manager import ConceptManager
+from .graph_manager import parse_wiki_links
 
 if TYPE_CHECKING:
     from src.bot.config import BotConfig
@@ -43,10 +45,11 @@ class DataHivePipeline:
             whisper_url=config.get("whisper_url", ""),
             whisper_api_key=config.get("whisper_api_key", ""),
         )
+        # Предпочитаем новые llama.cpp ключи, но сохраняем совместимость со старыми именами.
         self.brain = LocalBrain(
-            model=config.get("ollama_model", "llama3.2"),
-            base_url=config.get("ollama_url", "http://localhost:8080"),
-            api_key=config.get("ollama_api_key", ""),
+            model=config.get("llama_cpp_model") or config.get("ollama_model", "llama3.2"),
+            base_url=config.get("llama_cpp_url") or config.get("ollama_url", "http://localhost:8080"),
+            api_key=config.get("llama_cpp_api_key") or config.get("ollama_api_key", ""),
         )
 
         if config.get("num_threads"):
@@ -56,6 +59,8 @@ class DataHivePipeline:
 
         # WikiManager — user_root задаётся позже через process()
         self.wiki_manager: Optional[WikiManager] = None
+        # ConceptManager — инициализируется вместе с WikiManager
+        self.concept_manager: Optional[ConceptManager] = None
 
         session_file = Path(config.get("session_file", "session.json"))
         if session_file.exists():
@@ -77,12 +82,21 @@ class DataHivePipeline:
             "temp_dir": str(output_dir),
             "whisper_url": bot_config.whisper_url,
             "whisper_api_key": bot_config.whisper_api_key,
+            "llama_cpp_model": bot_config.ollama_model,
+            "llama_cpp_url": bot_config.ollama_url,
+            "llama_cpp_api_key": bot_config.ollama_api_key,
             "ollama_model": bot_config.ollama_model,
             "ollama_url": bot_config.ollama_url,
+            "ollama_api_key": bot_config.ollama_api_key,
         }
         pipeline = cls(config_dict)
         if user_root:
             pipeline.wiki_manager = WikiManager(user_root)
+            pipeline.concept_manager = ConceptManager(
+                concepts_dir=user_root / "wiki" / "concepts",
+                ollama_model=bot_config.ollama_model,
+                ollama_url=bot_config.ollama_url,
+            )
         return pipeline
 
     def process(self, url: str) -> Optional[Path]:
@@ -170,8 +184,33 @@ class DataHivePipeline:
                     details=f"Теги: {', '.join(tags[:8])}\nСаммари: {summary[:120] if isinstance(summary, str) else ''}",
                     folder_name=folder_name,
                 )
+                # Шаг 7: Обновление графа знаний
+                knowledge_text = note_path.read_text(encoding="utf-8")
+                wiki_links = parse_wiki_links(knowledge_text)
+                if wiki_links:
+                    title_str = summary[:100] if isinstance(summary, str) else folder_name
+                    date_str_graph = content.date or datetime.now().strftime("%Y-%m-%d")
+                    self.wiki_manager.update_graph(
+                        folder_name=folder_name,
+                        title=title_str,
+                        date=date_str_graph,
+                        wiki_links=wiki_links,
+                    )
             except Exception as e:
                 logger.warning(f"⚠️ WikiManager ошибка: {e}")
+
+        # Шаг 8: Обновление concept pages (wiki compiler)
+        if self.concept_manager:
+            try:
+                folder_name = note_path.parent.name
+                tags = ai_result.get("tags", [])
+                self.concept_manager.update_concepts(
+                    knowledge_md_path=note_path,
+                    folder_name=folder_name,
+                    tags=tags,
+                )
+            except Exception as e:
+                logger.warning(f"⚠️ ConceptManager ошибка: {e}")
 
         return note_path
 
