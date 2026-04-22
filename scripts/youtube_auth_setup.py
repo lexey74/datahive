@@ -23,6 +23,10 @@ import json
 import sys
 from pathlib import Path
 
+PLAYWRIGHT_MAX_UNIX_EXPIRES = 253402300799
+WEBKIT_EPOCH_OFFSET_SECONDS = 11644473600
+WEBKIT_MICROSECONDS_THRESHOLD = 10**12
+
 # Добавляем корень проекта в PYTHONPATH
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -75,21 +79,52 @@ def _netscape_to_playwright(cookies_txt: Path) -> list[dict]:
         if len(parts) != 7:
             continue
         domain, flag, path, secure, expires, name, value = parts
-        try:
-            expires_int = int(expires)
-        except ValueError:
-            expires_int = 0
+        if not _is_youtube_auth_cookie_domain(domain):
+            continue
+
+        expires_int = _normalize_cookie_expiry(expires)
         cookies.append({
             "name": name,
             "value": value,
             "domain": domain,
             "path": path,
-            "expires": expires_int if expires_int > 0 else -1,
+            "expires": expires_int,
             "httpOnly": False,
             "secure": secure.upper() == "TRUE",
             "sameSite": "None",
         })
     return cookies
+
+
+def _is_youtube_auth_cookie_domain(domain: str) -> bool:
+    """Оставляет только домены, полезные для авторизации YouTube/Google."""
+    normalized_domain = domain.strip().lower().lstrip(".")
+    return (
+        "youtube" in normalized_domain
+        or normalized_domain.endswith("google.com")
+        or normalized_domain.endswith("accounts.google.com")
+        or normalized_domain.endswith("googleusercontent.com")
+    )
+
+
+def _normalize_cookie_expiry(expires: str) -> int:
+    """Приводит expiry из cookies.txt к формату, совместимому с Playwright."""
+    try:
+        expires_int = int(expires)
+    except ValueError:
+        return -1
+
+    if expires_int <= 0:
+        return -1
+
+    # Chrome/yt-dlp иногда экспортирует timestamps в WebKit microseconds since 1601.
+    if expires_int > PLAYWRIGHT_MAX_UNIX_EXPIRES:
+        expires_int = (expires_int // 1_000_000) - WEBKIT_EPOCH_OFFSET_SECONDS
+
+    if expires_int <= 0:
+        return -1
+
+    return min(expires_int, PLAYWRIGHT_MAX_UNIX_EXPIRES)
 
 
 def _create_storage_state(cookies: list[dict], storage_state_path: Path) -> None:

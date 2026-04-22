@@ -1,4 +1,5 @@
 import asyncio
+import html
 import logging
 import re
 from contextlib import asynccontextmanager
@@ -17,6 +18,7 @@ from src.bot.states import ContentStates
 from src.modules.content_router import ContentRouter
 from src.modules.downloader_base import DownloadSettings
 from src.modules.local_brain import LocalBrain
+from src.modules.local_ears import LocalEars, TranscriptResult
 from src.modules.wiki_manager import WikiManager
 
 router = Router()
@@ -68,6 +70,20 @@ YES_ANSWERS = {
 }
 NO_ANSWERS = {"нет", "no", "n", "не", "не надо", "пропустить", "0"}
 FINISH_DIALOG_WORDS = {"готово", "стоп", "хватит", "достаточно", "/done", "завершить"}
+TRANSCRIBABLE_MEDIA_EXTENSIONS = {
+    ".mp4",
+    ".mp3",
+    ".m4a",
+    ".wav",
+    ".ogg",
+    ".oga",
+    ".webm",
+    ".aac",
+    ".flac",
+    ".opus",
+    ".mov",
+    ".mkv",
+}
 
 
 def get_user_folder(user_id: int, username: str, config: BotConfig) -> Path:
@@ -143,15 +159,78 @@ def _is_finish_dialog(text: str) -> bool:
     return (text or "").strip().lower() in FINISH_DIALOG_WORDS
 
 
+def _is_transcribable_media(media_path: Path) -> bool:
+    return media_path.suffix.lower() in TRANSCRIBABLE_MEDIA_EXTENSIONS
+
+
+def _split_text_chunks(text: str, max_len: int = 3500) -> list[str]:
+    normalized = text.strip()
+    if not normalized:
+        return []
+
+    lines = normalized.splitlines(keepends=True)
+    chunks: list[str] = []
+    current = ""
+    for line in lines:
+        if len(current) + len(line) <= max_len:
+            current += line
+            continue
+        if current:
+            chunks.append(current)
+            current = ""
+        if len(line) <= max_len:
+            current = line
+            continue
+        for i in range(0, len(line), max_len):
+            chunks.append(line[i : i + max_len])
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def _write_transcript_markdown(
+    transcript_path: Path,
+    transcript_result: TranscriptResult,
+    media_file_name: str,
+    title: str,
+) -> None:
+    today = datetime.now().strftime("%Y-%m-%d")
+    transcript_path.write_text(
+        "\n".join(
+            [
+                "---",
+                f'title: "{title}"',
+                f"date: {today}",
+                f"media_file: {media_file_name}",
+                "whisper_model: remote-whisper-service",
+                f"language: {transcript_result.language}",
+                f"duration: {transcript_result.duration:.1f}",
+                "type: transcript",
+                "---",
+                "",
+                "# Транскрипция",
+                "",
+                "## С таймкодами",
+                "",
+                transcript_result.timed_transcript,
+                "",
+                "## Полный текст",
+                "",
+                transcript_result.full_text,
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
 def _build_download_settings(config: BotConfig) -> DownloadSettings:
-    # Свежие куки от PlaywrightCookieManager имеют приоритет над старым cookies/
     playwright_cookie = config.youtube_auth_dir / "yt_cookies.txt"
-    if playwright_cookie.exists():
-        youtube_cookies = playwright_cookie
-        youtube_cookies_dir = None
-    else:
-        youtube_cookies = Path("cookies.txt") if Path("cookies.txt").exists() else None
-        youtube_cookies_dir = Path("cookies") if Path("cookies").exists() else None
+    youtube_cookies = playwright_cookie if playwright_cookie.exists() else None
+    if youtube_cookies is None and Path("cookies.txt").exists():
+        youtube_cookies = Path("cookies.txt")
+
+    youtube_cookies_dir = Path("cookies") if Path("cookies").exists() else None
 
     instagram_cookies = (
         Path("cookies/instagram_cookies.txt")
@@ -618,22 +697,34 @@ async def handle_expansion_save_confirmation(
     )
 
 
-@router.message(F.photo | F.video | F.document)
+@router.message(F.photo | F.video | F.document | F.audio | F.voice)
 async def handle_media(
     message: types.Message, state: FSMContext, config: BotConfig
 ) -> None:
-    """Handle forwarded/direct video, document and photo messages."""
+    """Handle forwarded/direct media messages (video, audio, voice, document, photo)."""
     user_id = message.from_user.id if message.from_user else 0
     username = message.from_user.username if message.from_user else ""
     user_folder = get_user_folder(user_id, username or "", config)
 
     # --- Определяем тип и получаем file_id / имя файла ---
-    media_obj: types.Video | types.Document | types.PhotoSize
+    media_obj: (
+        types.Video | types.Document | types.PhotoSize | types.Audio | types.Voice
+    )
     if message.video:
         media_obj = message.video
         media_type = "video"
         original_name = media_obj.file_name or f"video_{media_obj.file_id[:8]}.mp4"
         mime = media_obj.mime_type or "video/mp4"
+    elif message.audio:
+        media_obj = message.audio
+        media_type = "audio"
+        original_name = media_obj.file_name or f"audio_{media_obj.file_id[:8]}.mp3"
+        mime = media_obj.mime_type or "audio/mpeg"
+    elif message.voice:
+        media_obj = message.voice
+        media_type = "voice"
+        original_name = f"voice_{media_obj.file_id[:8]}.ogg"
+        mime = media_obj.mime_type or "audio/ogg"
     elif message.document:
         media_obj = message.document
         media_type = "document"
@@ -782,9 +873,130 @@ async def handle_media(
             done_lines.append(f"\n💬 <i>{caption[:120]}</i>")
         await status_msg.edit_text("\n".join(done_lines))
 
+        if _is_transcribable_media(save_path):
+            await state.update_data(
+                media_path=str(save_path),
+                media_dir=str(media_dir),
+                media_file_name=save_name,
+                media_title=(caption[:80] or original_name),
+            )
+            await state.set_state(ContentStates.waiting_media_transcribe_confirmation)
+            await message.answer("🎤 Транскрибировать этот файл сейчас? (да/нет)")
+
     except Exception as e:
         logger.exception(f"Ошибка сохранения медиа: {e}")
         await status_msg.edit_text(f"❌ Не удалось сохранить медиа: {str(e)[:200]}")
+
+
+@router.message(ContentStates.waiting_media_transcribe_confirmation, F.text)
+async def handle_media_transcribe_confirmation(
+    message: types.Message, state: FSMContext, config: BotConfig
+) -> None:
+    answer = (message.text or "").strip().lower()
+    if not (_is_yes(answer) or _is_no(answer)):
+        await message.answer("Ответь, пожалуйста: <b>да</b> или <b>нет</b>.")
+        return
+
+    if _is_no(answer):
+        await state.clear()
+        await message.answer(
+            "Ок, оставил файл в папке для последующей транскрибации. "
+            "Можешь запустить её позже командой /transcribe."
+        )
+        return
+
+    data = await state.get_data()
+    media_path_raw = data.get("media_path")
+    media_dir_raw = data.get("media_dir")
+    media_file_name = data.get("media_file_name", "media.bin")
+    media_title = data.get("media_title", media_file_name)
+
+    if not media_path_raw or not media_dir_raw:
+        await state.clear()
+        await message.answer("⚠️ Не нашёл сохранённый файл. Пришли медиа ещё раз.")
+        return
+
+    media_path = Path(media_path_raw)
+    media_dir = Path(media_dir_raw)
+    status_msg = await message.answer(
+        "🎤 Транскрибирую медиа...\nЭто может занять несколько минут."
+    )
+
+    try:
+        ears = LocalEars(
+            whisper_url=config.whisper_url,
+            whisper_api_key=config.whisper_api_key,
+        )
+        transcript_result = await asyncio.to_thread(ears.transcribe, media_path)
+        if not transcript_result:
+            await state.clear()
+            await status_msg.edit_text("⚠️ Не удалось транскрибировать этот файл.")
+            return
+
+        transcript_path = media_dir / "transcript.md"
+        _write_transcript_markdown(
+            transcript_path=transcript_path,
+            transcript_result=transcript_result,
+            media_file_name=media_file_name,
+            title=media_title,
+        )
+
+        await status_msg.edit_text(
+            f"✅ Транскрипция готова!\n\n"
+            f"📂 Папка: <code>{media_dir.name}</code>\n"
+            f"📄 Файл: <code>{transcript_path.name}</code>"
+        )
+
+        text_chunks = _split_text_chunks(transcript_result.full_text)
+        if text_chunks:
+            await message.answer("📝 <b>Извлеченный текст:</b>")
+            for chunk in text_chunks:
+                await message.answer(html.escape(chunk))
+        else:
+            await message.answer("📝 Извлеченный текст пустой.")
+
+        await state.update_data(media_path=str(media_path))
+        await state.set_state(ContentStates.waiting_media_delete_confirmation)
+        await message.answer("Удалить исходный медиафайл из папки? (да/нет)")
+
+    except Exception as e:
+        logger.error(f"Ошибка транскрибации: {e}", exc_info=True)
+        await state.clear()
+        await status_msg.edit_text(f"❌ Ошибка транскрибации: {str(e)[:200]}")
+
+
+@router.message(ContentStates.waiting_media_delete_confirmation, F.text)
+async def handle_media_delete_confirmation(
+    message: types.Message, state: FSMContext
+) -> None:
+    answer = (message.text or "").strip().lower()
+    if not (_is_yes(answer) or _is_no(answer)):
+        await message.answer("Ответь, пожалуйста: <b>да</b> или <b>нет</b>.")
+        return
+
+    if _is_no(answer):
+        await state.clear()
+        await message.answer("Ок, исходный медиафайл оставил в папке.")
+        return
+
+    data = await state.get_data()
+    media_path_raw = data.get("media_path")
+    if not media_path_raw:
+        await state.clear()
+        await message.answer("⚠️ Не нашёл путь к исходному файлу.")
+        return
+
+    media_path = Path(media_path_raw)
+    try:
+        if media_path.exists():
+            media_path.unlink()
+            await message.answer("🗑 Исходный медиафайл удалён. Оставил только транскрипцию.")
+        else:
+            await message.answer("ℹ️ Исходный медиафайл уже отсутствует.")
+    except Exception as e:
+        await message.answer(f"❌ Не удалось удалить исходный файл: {str(e)[:200]}")
+    finally:
+        await state.clear()
 
 
 @router.message(StateFilter(None), F.text & ~F.text.startswith("/"))

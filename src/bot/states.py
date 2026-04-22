@@ -12,3 +12,5 @@ class ContentStates(StatesGroup):
     waiting_post_process_action = State()
     waiting_topic_expansion_dialog = State()
     waiting_expansion_save_confirmation = State()
+    waiting_media_transcribe_confirmation = State()
+    waiting_media_delete_confirmation = State()

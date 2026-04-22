@@ -19,6 +19,40 @@ if TYPE_CHECKING:
 logger = structlog.get_logger(__name__)
 
 
+def _is_youtube_cookie_file(cookie_file: Path) -> bool:
+    """Определяет, относится ли файл cookies к YouTube."""
+    if not cookie_file.is_file():
+        return False
+
+    normalized_name = cookie_file.name.lower()
+    return normalized_name.endswith(".txt") and (
+        "youtube" in normalized_name or "youtu" in normalized_name or normalized_name.startswith("yt_")
+    )
+
+
+def _collect_youtube_cookie_files(settings: DownloadSettings) -> list[Path]:
+    """Собирает все доступные YouTube cookie-файлы без дубликатов."""
+    cookie_files: list[Path] = []
+    seen_paths: set[Path] = set()
+
+    if settings.youtube_cookies_dir and settings.youtube_cookies_dir.exists():
+        for cookie_file in settings.youtube_cookies_dir.iterdir():
+            if not _is_youtube_cookie_file(cookie_file):
+                continue
+            resolved_path = cookie_file.resolve()
+            if resolved_path in seen_paths:
+                continue
+            seen_paths.add(resolved_path)
+            cookie_files.append(cookie_file)
+
+    if settings.youtube_cookies and settings.youtube_cookies.exists():
+        resolved_path = settings.youtube_cookies.resolve()
+        if resolved_path not in seen_paths:
+            cookie_files.append(settings.youtube_cookies)
+
+    return cookie_files
+
+
 class YouTubeBaseDownloader(BaseDownloader):
     """Base class for YouTube downloaders with strategy chain support."""
 
@@ -32,17 +66,15 @@ class YouTubeBaseDownloader(BaseDownloader):
 
         # Cookie manager setup
         cookie_manager = None
-        if settings.youtube_cookies_dir:
-            cookie_manager = ImprovedCookieManager(
-                cookies_dir=settings.youtube_cookies_dir
+        cookie_files = _collect_youtube_cookie_files(settings)
+        if cookie_files:
+            cookies_dir = (
+                settings.youtube_cookies_dir
+                or cookie_files[0].parent
             )
-            for cookie_file in settings.youtube_cookies_dir.glob("youtube_cookies*.txt"):
+            cookie_manager = ImprovedCookieManager(cookies_dir=cookies_dir)
+            for cookie_file in cookie_files:
                 cookie_manager.add_cookies(cookie_file)
-        elif settings.youtube_cookies:
-            cookie_manager = ImprovedCookieManager(
-                cookies_dir=settings.youtube_cookies.parent
-            )
-            cookie_manager.add_cookies(settings.youtube_cookies)
 
         # Если передан PlaywrightCookieManager — добавляем его куки-файл в пул
         self._playwright_cookie_manager = playwright_cookie_manager

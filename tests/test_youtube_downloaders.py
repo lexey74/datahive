@@ -1,6 +1,7 @@
 import pytest
 from unittest.mock import patch
 
+from src.modules.youtube_grabber_v2 import ImprovedCookieManager
 from src.modules.youtube_video_downloader import (
     YouTubeVideoDownloader,
     YouTubeVideoResult,
@@ -48,6 +49,49 @@ class TestYouTubeDownloaders:
         assert not shorts_downloader.can_handle(
             "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
         )
+
+    def test_loads_youtube_cookies_from_directory_with_real_filename(self, tmp_path):
+        cookies_dir = tmp_path / "cookies"
+        cookies_dir.mkdir()
+        youtube_cookie = cookies_dir / "www.youtube.com_cookies.txt"
+        youtube_cookie.write_text("youtube", encoding="utf-8")
+        instagram_cookie = cookies_dir / "instagram_cookies.txt"
+        instagram_cookie.write_text("instagram", encoding="utf-8")
+
+        settings = DownloadSettings(youtube_cookies_dir=cookies_dir)
+
+        with patch(
+            "src.modules.youtube_downloader_base.ProductionYouTubeGrabber"
+        ) as mock_grabber:
+            YouTubeVideoDownloader(settings)
+
+        cookie_manager = mock_grabber.call_args.kwargs["cookie_manager"]
+        assert isinstance(cookie_manager, ImprovedCookieManager)
+        assert youtube_cookie.name in cookie_manager.stats
+        assert instagram_cookie.name not in cookie_manager.stats
+
+    def test_merges_direct_cookie_with_directory_pool(self, tmp_path):
+        cookies_dir = tmp_path / "cookies"
+        cookies_dir.mkdir()
+        directory_cookie = cookies_dir / "www.youtube.com_cookies.txt"
+        directory_cookie.write_text("youtube-dir", encoding="utf-8")
+        direct_cookie = tmp_path / "yt_cookies.txt"
+        direct_cookie.write_text("youtube-direct", encoding="utf-8")
+
+        settings = DownloadSettings(
+            youtube_cookies=direct_cookie,
+            youtube_cookies_dir=cookies_dir,
+        )
+
+        with patch(
+            "src.modules.youtube_downloader_base.ProductionYouTubeGrabber"
+        ) as mock_grabber:
+            YouTubeVideoDownloader(settings)
+
+        cookie_manager = mock_grabber.call_args.kwargs["cookie_manager"]
+        assert isinstance(cookie_manager, ImprovedCookieManager)
+        assert directory_cookie.name in cookie_manager.stats
+        assert direct_cookie.name in cookie_manager.stats
 
     @patch("src.modules.downloader_base.BaseDownloader.create_folder")
     @patch("src.modules.downloader_base.BaseDownloader.save_description")

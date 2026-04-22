@@ -115,7 +115,7 @@ async def run_transcription(
         return
     user_id = user.id
     status_msg = await message.answer(
-        "🎤 Транскрибирую видео...\nЭто может занять несколько минут."
+        "🎤 Транскрибирую медиа...\nЭто может занять несколько минут."
     )
 
     try:
@@ -182,12 +182,27 @@ async def cmd_transcribe(
         return
 
     latest_folder = folders[0]
-    video_files = (
-        list(latest_folder.glob("*.mp4"))
-        + list(latest_folder.glob("*.mp3"))
-        + list(latest_folder.glob("*.m4a"))
-    )
-    if not video_files:
+    supported_media_ext = {
+        ".mp4",
+        ".mp3",
+        ".m4a",
+        ".wav",
+        ".ogg",
+        ".oga",
+        ".webm",
+        ".aac",
+        ".flac",
+        ".opus",
+        ".mov",
+        ".mkv",
+    }
+    media_files = [
+        file
+        for file in latest_folder.iterdir()
+        if file.is_file() and file.suffix.lower() in supported_media_ext
+    ]
+
+    if not media_files:
         await message.reply(
             f"⚠️ В папке <code>{latest_folder.name}</code> нет медиа для транскрибации."
         )
@@ -201,7 +216,7 @@ async def cmd_transcribe(
 
     await queue_store.set_running("transcribe", user_id)
     asyncio.create_task(
-        run_transcription(video_files[0], latest_folder, config, message)
+        run_transcription(media_files[0], latest_folder, config, message)
     )
 
 

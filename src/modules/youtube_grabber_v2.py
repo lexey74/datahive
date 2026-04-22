@@ -366,6 +366,25 @@ class ProductionYouTubeGrabber:
 
         return cmd
 
+    def _build_sign_in_error(self, cookie_file: Optional[Path]) -> RuntimeError:
+        """Возвращает диагностическую ошибку для sign-in / anti-bot кейсов."""
+        cookie_name = cookie_file.name if cookie_file else "без cookies"
+        return RuntimeError(
+            "YouTube требует подтвержденную Google-сессию: "
+            f"cookie-файл {cookie_name} не прошел проверку авторизации"
+        )
+
+    def _build_download_error(self, stderr: str, cookie_file: Optional[Path]) -> RuntimeError:
+        """Классифицирует ошибки фактической загрузки видео."""
+        error = stderr.lower()
+        if "sign in" in error or "bot" in error:
+            return self._build_sign_in_error(cookie_file)
+        if "downloaded file is empty" in error:
+            return RuntimeError(
+                "YouTube отдал поток, но сегменты видео были отклонены CDN (googlevideo вернул пустой HLS результат)"
+            )
+        return RuntimeError(stderr.strip() or "Неизвестная ошибка yt-dlp")
+
     @rate_limit(calls=1, period=2.0)
     @smart_retry(max_attempts=4, base_delay=2.0, backoff=2.0)
     def get_metadata(self, url: str) -> Optional[Dict]:
@@ -398,7 +417,7 @@ class ProductionYouTubeGrabber:
                         self.cookie_manager.mark_usage(cookie_file, success=False)
                     # Пробуем другой client
                     self._rotate_client()
-                    raise Exception("Cookies blocked")
+                    raise self._build_sign_in_error(cookie_file)
 
                 elif "geo" in error or "location" in error:
                     print("🌍 Гео-блокировка")
@@ -408,7 +427,7 @@ class ProductionYouTubeGrabber:
                     print(f"❌ Ошибка: {result.stderr[:200]}")
                     if cookie_file:
                         self.cookie_manager.mark_usage(cookie_file, success=False)
-                    raise Exception(result.stderr)
+                    raise RuntimeError(result.stderr.strip() or "Неизвестная ошибка yt-dlp")
 
             # Успех
             metadata = json.loads(result.stdout)
@@ -481,7 +500,7 @@ class ProductionYouTubeGrabber:
                 if cookie_file:
                     self.cookie_manager.mark_usage(cookie_file, success=False)
                 self._rotate_client()
-                raise Exception(result.stderr)
+                raise self._build_download_error(result.stderr, cookie_file)
 
             # Ищем скачанный файл в правильной директории
             video_files = list(target_dir.glob(f"{video_id}.*"))
