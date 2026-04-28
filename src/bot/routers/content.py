@@ -148,9 +148,9 @@ def _is_no(text: str) -> bool:
 
 def _parse_post_action(text: str) -> str | None:
     normalized = (text or "").strip().lower()
-    if "полож" in normalized or "сохран" in normalized:
+    if normalized == "1" or "полож" in normalized or "сохран" in normalized:
         return "put"
-    if "раскры" in normalized or "углуб" in normalized or "обсуд" in normalized:
+    if normalized == "2" or "раскры" in normalized or "углуб" in normalized or "обсуд" in normalized:
         return "expand"
     return None
 
@@ -457,7 +457,7 @@ async def _ask_post_process_action(message: types.Message) -> None:
         "📚 Что делаем дальше?\n\n"
         "1) <b>Положить</b> в базу знаний в неизменном виде\n"
         "2) <b>Раскрыть</b> тему (задам уточняющие вопросы)\n\n"
-        "Ответь: <b>положить</b> или <b>раскрыть</b>."
+        "Ответь: <b>1</b> — положить или <b>2</b> — раскрыть."
     )
 
 
@@ -599,7 +599,7 @@ async def handle_post_process_action(
     action = _parse_post_action(message.text or "")
     if action is None:
         await message.answer(
-            "Не понял ответ. Напиши <b>положить</b> или <b>раскрыть</b>."
+            "Не понял ответ. Напиши <b>1</b> — положить или <b>2</b> — раскрыть."
         )
         return
 
@@ -624,9 +624,9 @@ async def handle_post_process_action(
     )
     await state.set_state(ContentStates.waiting_topic_expansion_dialog)
     await message.answer(
-        "🧠 Отлично, раскрываем тему. Я задам несколько уточняющих вопросов.\n"
-        "Когда захочешь завершить, напиши <b>готово</b>.\n\n"
-        f"{question}"
+        "🧠 Отлично, раскрываем тему. Я задам несколько уточняющих вопросов.\n\n"
+        f"{question}\n\n"
+        "Если достаточно — напиши слово <b>хватит</b>."
     )
 
 
@@ -645,7 +645,8 @@ async def handle_topic_expansion_dialog(
         await state.update_data(expansion_summary=summary)
         await state.set_state(ContentStates.waiting_expansion_save_confirmation)
         await message.answer(
-            f"📝 Итоговое саммари:\n\n{summary}\n\nПоложить это в базу знаний? (да/нет)"
+            f"📝 Итоговое саммари:\n\n{summary}\n\n"
+            "Положить в базу? Напиши <b>1</b>, или вставь свой вариант саммари."
         )
         return
 
@@ -659,7 +660,7 @@ async def handle_topic_expansion_dialog(
         await state.set_state(ContentStates.waiting_expansion_save_confirmation)
         await message.answer(
             f"📝 Собрал итоговое саммари:\n\n{summary}\n\n"
-            "Положить это в базу знаний? (да/нет)"
+            "Положить в базу? Напиши <b>1</b>, или вставь свой вариант саммари."
         )
         return
 
@@ -667,26 +668,22 @@ async def handle_topic_expansion_dialog(
         question = await _generate_expansion_question(config, base_context, dialog)
     dialog.append({"role": "assistant", "content": question})
     await state.update_data(expansion_dialog=dialog)
-    await message.answer(question)
+    await message.answer(f"{question}\n\nЕсли достаточно — напиши слово <b>хватит</b>.")
 
 
 @router.message(ContentStates.waiting_expansion_save_confirmation, F.text)
 async def handle_expansion_save_confirmation(
     message: types.Message, state: FSMContext, config: BotConfig
 ) -> None:
-    answer = (message.text or "").strip().lower()
-    if _is_no(answer):
-        await state.clear()
-        await message.answer("Ок, не сохраняю. Диалог завершен.")
-        return
-
-    if not _is_yes(answer):
-        await message.answer("Ответь, пожалуйста: <b>да</b> или <b>нет</b>.")
-        return
-
+    answer = (message.text or "").strip()
     data = await state.get_data()
-    summary = data.get("expansion_summary", "")
     dialog = data.get("expansion_dialog", [])
+
+    if answer == "1":
+        summary = data.get("expansion_summary", "")
+    else:
+        summary = answer
+
     note_path = await _save_note(
         config, message, data, mode="expanded", summary=summary, dialog=dialog
     )
