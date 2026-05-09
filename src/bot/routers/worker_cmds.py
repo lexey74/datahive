@@ -305,6 +305,7 @@ async def cmd_ai(message: types.Message, config: BotConfig, bot: Bot) -> None:
                     concepts_dir=user_root / "wiki" / "concepts",
                     ollama_model=config.ollama_model,
                     ollama_url=config.ollama_url,
+                    ollama_api_key=config.ollama_api_key,
                 )
                 asyncio.create_task(
                     asyncio.to_thread(
@@ -334,22 +335,9 @@ async def cmd_ai(message: types.Message, config: BotConfig, bot: Bot) -> None:
         await queue_store.set_done("ai", user_id)
 
 
-@router.message(Command("check"))
-async def cmd_check(message: types.Message, config: BotConfig) -> None:
-    """Handler for /check — статус фоновых задач"""
-    user = message.from_user
-    if user is None:
-        await message.reply("❌ Не удалось определить пользователя.")
-        return
-    user_id = user.id
-
-    status_text = await _build_status_text(user_id, config)
-    await message.reply(status_text)
-
-
 @router.message(Command("status"))
 async def cmd_status(message: types.Message, config: BotConfig) -> None:
-    """Handler for /status — детальный статус с health-check llama.cpp"""
+    """Handler for /status — статус задач и health-check сервисов."""
     user = message.from_user
     if user is None:
         await message.reply("❌ Не удалось определить пользователя.")

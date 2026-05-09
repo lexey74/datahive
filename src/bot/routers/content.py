@@ -10,7 +10,7 @@ from typing import AsyncIterator
 from urllib.parse import urlparse
 
 from aiogram import F, Router, types
-from aiogram.filters import Command, StateFilter
+from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
 
 from src.bot.config import BotConfig
@@ -471,14 +471,6 @@ async def _ask_next_link_decision(
     )
 
 
-@router.message(Command("url"))
-async def cmd_url(message: types.Message, state: FSMContext) -> None:
-    """Start URL input flow"""
-    await state.set_state(ContentStates.waiting_url)
-    await message.answer("🔗 Пришли мне ссылку на YouTube или Instagram:")
-
-
-@router.message(ContentStates.waiting_url)
 @router.message(
     F.text
     & F.text.regexp(r"(https?://)?(www\.)?(youtube\.com|youtu\.be|instagram\.com)")
@@ -487,11 +479,6 @@ async def handle_url(
     message: types.Message, state: FSMContext, config: BotConfig
 ) -> None:
     """Handle YouTube/Instagram URLs"""
-    # If we were waiting for URL, clear state
-    current_state = await state.get_state()
-    if current_state == ContentStates.waiting_url:
-        await state.clear()
-
     url = (message.text or "").strip()
     status_msg = await message.reply("🔎 Анализирую ссылку...")
 

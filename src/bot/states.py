@@ -7,7 +7,6 @@ class ContentStates(StatesGroup):
     waiting_description = State()
     waiting_title = State()
     waiting_comments_confirmation = State()
-    waiting_url = State()
     waiting_link_download_decision = State()
     waiting_post_process_action = State()
     waiting_topic_expansion_dialog = State()

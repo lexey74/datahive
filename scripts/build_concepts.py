@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import sys
+import os
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -26,8 +27,11 @@ USER_ROOT = ROOT / "users" / "lexey"
 DOWNLOADS_DIR = USER_ROOT / "downloads"
 CONCEPTS_DIR = USER_ROOT / "wiki" / "concepts"
 
-LLAMA_CPP_URL = "http://localhost:8080"
-LLAMA_CPP_MODEL = "qwen3:4b"
+LLAMA_CPP_URL = os.environ.get("LLAMA_CPP_URL", "http://localhost:8080")
+LLAMA_CPP_MODEL = os.environ.get("LLAMA_CPP_MODEL_COMPLEX") or os.environ.get(
+    "LLAMA_CPP_MODEL", "qwen3-4b"
+)
+LLAMA_CPP_API_KEY = os.environ.get("LLAMA_CPP_API_KEY", "")
 
 
 def parse_tags(content: str) -> list[str]:
@@ -64,6 +68,7 @@ def main() -> None:
         concepts_dir=CONCEPTS_DIR,
         ollama_model=LLAMA_CPP_MODEL,
         ollama_url=LLAMA_CPP_URL,
+        ollama_api_key=LLAMA_CPP_API_KEY,
     )
 
     total_created = 0

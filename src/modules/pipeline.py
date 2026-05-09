@@ -96,6 +96,7 @@ class DataHivePipeline:
                 concepts_dir=user_root / "wiki" / "concepts",
                 ollama_model=bot_config.ollama_model,
                 ollama_url=bot_config.ollama_url,
+                ollama_api_key=bot_config.ollama_api_key,
             )
         return pipeline
 

@@ -246,14 +246,11 @@ src/
 
 ## 🔧 Troubleshooting
 
-### Ошибка: "Ollama не отвечает"
+### Ошибка: "LLM не отвечает"
 
 ```bash
-# Проверьте, что Ollama запущен
-ollama serve
-
-# Проверьте модель
-ollama list
+# Проверьте доступность llama.cpp endpoint
+curl -sS http://llamacpp:8080/health || true
 ```
 
 ### Ошибка: "yt-dlp не может скачать"
@@ -311,4 +308,4 @@ MIT
 - [yt-dlp](https://github.com/yt-dlp/yt-dlp)
 - [instagrapi](https://github.com/subzeroid/instagrapi)
 - [faster-whisper](https://github.com/guillaumekln/faster-whisper)
-- [Ollama](https://ollama.ai)
+- [llama.cpp](https://github.com/ggerganov/llama.cpp)

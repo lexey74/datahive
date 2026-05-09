@@ -1,6 +1,5 @@
 # DataHive — docker-compose
 # Два сервиса: bot, whisper.
-# Ollama вынесена в отдельный проект /home/lexey/projects/ollama/
 # TLS и публичный доступ — через общий Caddy (/home/lexey/projects/caddy/)
 #
 # Использование:
@@ -39,7 +38,7 @@ services:
     networks:
       - datahive_internal
       - datahive_external   # выход в интернет (api.telegram.org)
-      - projects_net        # доступ к ollama
+      - projects_net        # доступ к внешним сервисам в общей сети
 
   whisper:
     build:
@@ -81,6 +80,6 @@ networks:
   # Сеть для выхода бота в интернет (api.telegram.org)
   datahive_external:
     driver: bridge
-  # Общая сеть проектов — Caddy + ollama
+  # Общая сеть проектов — Caddy и инфраструктурные сервисы
   projects_net:
     external: true

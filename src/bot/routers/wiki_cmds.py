@@ -10,6 +10,7 @@ Inline-кнопка [💾 Сохранить в wiki] добавляется к 
 """
 
 import asyncio
+import html
 import logging
 from pathlib import Path
 
@@ -21,6 +22,7 @@ from src.bot.config import BotConfig
 from src.modules.wiki_manager import WikiManager
 from src.modules.wiki_linter import WikiLinter
 from src.modules.concept_manager import ConceptManager
+from scripts.rebuild_graph import rebuild_graph
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -84,6 +86,50 @@ async def cmd_wiki(message: types.Message, config: BotConfig) -> None:
         f"📋 <code>{user_root / 'log.md'}</code>"
     )
     await message.answer(text)
+
+
+# ── /rebuild_graph — пересборка графа ─────────────────────────────
+
+
+@router.message(Command("rebuild_graph"))
+async def cmd_rebuild_graph(message: types.Message, config: BotConfig) -> None:
+    """Пересобрать wiki/graph.json из Knowledge.md без вызова llama.cpp."""
+    user_root = _get_user_root(
+        config, message.from_user.id if message.from_user else None
+    )
+
+    status_msg = await message.answer(
+        "🔗 Пересобираю graph.json из Knowledge.md и тегов..."
+    )
+
+    try:
+        result = await asyncio.to_thread(rebuild_graph, user_root)
+    except Exception as e:
+        logger.error("Ошибка rebuild_graph: %s", e, exc_info=True)
+        await status_msg.edit_text(f"❌ Ошибка rebuild_graph: {html.escape(str(e)[:200])}")
+        return
+
+    unlinked = result["unlinked"]
+    lines = [
+        "✅ <b>Граф пересобран</b>",
+        "",
+        f"📄 Knowledge.md: <b>{result['knowledge_files']}</b>",
+        f"🔗 Документов со связями: <b>{result['linked_documents']}</b>",
+        f"⚪ Без concept-связей: <b>{result['unlinked_documents']}</b>",
+        f"🧩 Узлов графа: <b>{result['graph_nodes']}</b>",
+        f"🪢 Рёбер графа: <b>{result['graph_edges']}</b>",
+        f"📁 <code>{html.escape(str(result['graph_file']))}</code>",
+    ]
+
+    if unlinked:
+        lines.append("")
+        lines.append("<b>Первые несвязанные:</b>")
+        for name in unlinked[:10]:
+            lines.append(f"• <code>{html.escape(name)}</code>")
+        if len(unlinked) > 10:
+            lines.append(f"• … и ещё {len(unlinked) - 10}")
+
+    await status_msg.edit_text("\n".join(lines))
 
 
 # ── /lint — проверка здоровья ─────────────────────────────────────
@@ -216,6 +262,7 @@ async def cmd_concepts(message: types.Message, config: BotConfig) -> None:
         concepts_dir=user_root / "wiki" / "concepts",
         ollama_model=config.ollama_model,
         ollama_url=config.ollama_url,
+        ollama_api_key=config.ollama_api_key,
     )
 
     try:

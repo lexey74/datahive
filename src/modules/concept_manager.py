@@ -74,10 +74,12 @@ class ConceptManager:
         concepts_dir: Path,
         ollama_model: str = "llama3.2",
         ollama_url: str = "http://localhost:8080",
+        ollama_api_key: str = "",
     ) -> None:
         self.concepts_dir = Path(concepts_dir)
         self.ollama_model = ollama_model
         self.ollama_url = ollama_url
+        self.ollama_api_key = ollama_api_key
         self._client: Any = None
 
     def _get_client(self) -> Any:
@@ -85,7 +87,10 @@ class ConceptManager:
             try:
                 from .local_brain import LlamaCppClient
 
-                self._client = LlamaCppClient(host=self.ollama_url)
+                self._client = LlamaCppClient(
+                    host=self.ollama_url,
+                    api_key=self.ollama_api_key,
+                )
             except ImportError as e:
                 raise ImportError("Не удалось импортировать llama.cpp клиент") from e
         return self._client
